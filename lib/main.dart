@@ -1,16 +1,60 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'pages/home_page.dart';
 
 /// Einstiegspunkt der Belegscanner-App.
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // Lokalisierungsdaten für Deutsch initialisieren
-  await initializeDateFormatting('de_DE');
+      try {
+        // Lokalisierungsdaten für Deutsch initialisieren
+        await initializeDateFormatting('de_DE');
 
-  runApp(const BelegscannerApp());
+        runApp(const BelegscannerApp());
+      } catch (e, stackTrace) {
+        debugPrint('Startup-Fehler: $e\n$stackTrace');
+        runApp(ErrorApp(error: e));
+      }
+    },
+    (error, stackTrace) {
+      debugPrint('Zone-Fehler: $error\n$stackTrace');
+    },
+  );
+}
+
+/// Fehler-Screen der beim Start-Absturz angezeigt wird, damit der Fehler lesbar ist.
+class ErrorApp extends StatelessWidget {
+  final Object error;
+
+  const ErrorApp({super.key, required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.red,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text(
+              error.toString(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Root-Widget der App mit Material 3 Theme.

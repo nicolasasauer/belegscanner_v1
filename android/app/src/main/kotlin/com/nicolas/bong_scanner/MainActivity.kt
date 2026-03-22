@@ -1,4 +1,4 @@
-package com.example.belegscanner_v1
+package com.nicolas.bong_scanner
 
 import io.flutter.embedding.android.FlutterActivity
 

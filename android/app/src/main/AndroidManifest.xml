@@ -16,7 +16,8 @@
         android:label="Belegscanner"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:enableOnBackInvokedCallback="true">
+        android:enableOnBackInvokedCallback="true"
+        android:extractNativeLibs="true">
         <!-- Flutter v2 embedding marker -->
         <meta-data
             android:name="flutterEmbedding"

@@ -64,7 +64,10 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _loadReceipts();
+    // Android 16 killt Apps, die im ersten Frame zu viel CPU beanspruchen.
+    // Kleine Verzögerung gibt dem Framework Zeit, den ersten Frame zu rendern,
+    // bevor Datenbank und ML Kit initialisiert werden.
+    Future.delayed(const Duration(milliseconds: 500), _loadReceipts);
   }
 
   /// Lädt alle gespeicherten Belege aus der lokalen Datenbank.

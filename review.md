@@ -200,6 +200,8 @@ return maxAmount;
 **Beschreibung:**  
 Der Fallback-Algorithmus gibt einfach den *größten* erkannten numerischen Wert zurück, der dem Muster `\d{1,4}[.,]\d{2}` entspricht. Auf echten Kassenbons können Artikelnummern (z. B. `1234.56`) oder interne Codes größer als der Gesamtbetrag sein, was zu systematisch falschen Betragserkennungen führt. Dies ist kein Sicherheitsproblem im engeren Sinne, kann aber bei falschen Beträgen zu finanziellen Fehlentscheidungen führen.
 
+**Update I-08 [REFINED]:** Die Parsing-Logik in `_parseItemsImpl` wurde überarbeitet, um Header-Daten (GmbH/OHG, PLZ, Str./Straße, Telefon, USt-IdNr., Datum, Uhrzeit) per Regex-Ausschlussliste zu filtern, OCR-Junk-Präfixe wie „CnBio"/„unBio" zu strippen sowie Zeilen mit zu wenigen Buchstaben oder einem zu hohen Anteil an Ziffern/Sonderzeichen auszuschließen.
+
 ---
 
 ## Prüfung auf Backdoors, Viren und Datenabflüsse

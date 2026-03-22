@@ -44,12 +44,53 @@ double _parseAmountImpl(String text) {
   return maxAmount;
 }
 
-/// Zerlegt den OCR-Text in Einzelzeilen und filtert leere Zeilen heraus.
+/// Zerlegt den OCR-Text in Einzelzeilen, bereinigt OCR-Artefakte und
+/// filtert Header-Daten, zu kurze Zeilen sowie Junk-Text heraus.
+///
+/// Angewendete Filter-Schritte:
+///   1. Header- und Meta-Daten (Firmenform, Adresse, Telefon, Datum, Uhrzeit)
+///      werden per Regex-Ausschlussliste entfernt.
+///   2. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio", "dnBio")
+///      werden gestripped, sodass der Artikelname erhalten bleibt.
+///   3. Zeilen mit weniger als 4 Buchstaben werden gefiltert.
+///   4. Zeilen mit mehr als 50 % Ziffern und Sonderzeichen werden gefiltert.
 List<String> _parseItemsImpl(String text) {
+  // 1. Ausschlussmuster für typische Bon-Header und Meta-Daten
+  final RegExp headerPattern = RegExp(
+    r'GmbH|OHG|e\.K\.|'
+    r'(?:^|\s)(?:AG|KG|eG)(?:\s|$)|e\.V\.|'
+    r'\b\d{5}\b|Str\.|Stra[ßs]e|'
+    r'Tel\.?:?\s*[\d\s\-/()]{5,}|Telefon|'
+    r'USt.{0,5}IdNr|Steuernummer|'
+    r'\d{1,2}\.\d{1,2}\.\d{2,4}|'
+    r'\d{1,2}:\d{2}\s*Uhr|'
+    r'www\.\S+|https?://',
+    caseSensitive: false,
+  );
+
+  // 2. OCR-Junk-Präfixe (z. B. 'CnBio', 'unBio', 'dnBio', 'xnBio')
+  final RegExp junkPrefixPattern = RegExp(r'^[A-Za-z]nBio\s+');
+
+  // Hilfsmuster für die Buchstaben- und Sonderzeichen-Filter
+  final RegExp letterPattern = RegExp(r'[A-Za-zÄÖÜäöüß]');
+  final RegExp nonLetterNonSpacePattern = RegExp(r'[A-Za-zÄÖÜäöüß\s]');
+
   return text
       .split('\n')
       .map((line) => line.trim())
-      .where((line) => line.isNotEmpty && line.length > 1)
+      .where((line) => line.isNotEmpty)
+      // 1. Header- und Meta-Daten-Zeilen ausschließen
+      .where((line) => !headerPattern.hasMatch(line))
+      // 2. OCR-Junk-Präfixe am Zeilenanfang strippen
+      .map((line) => line.replaceFirst(junkPrefixPattern, '').trim())
+      // 3. Zeilen mit < 4 Buchstaben ausschließen
+      .where((line) => letterPattern.allMatches(line).length >= 4)
+      // 4. Zeilen mit > 50 % Ziffern/Sonderzeichen ausschließen
+      .where((line) {
+        final nonLetterNonSpace =
+            line.replaceAll(nonLetterNonSpacePattern, '').length;
+        return nonLetterNonSpace * 2 <= line.length;
+      })
       .toList();
 }
 

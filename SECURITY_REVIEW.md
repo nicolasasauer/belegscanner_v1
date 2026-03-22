@@ -24,7 +24,7 @@
 | I-05 | 🔵 Informell | Ungepinnte GitHub Actions (Supply-Chain) | ⏳ Open |
 | I-06 | 🔵 Informell | Release-Build auf allen Branches | ⏳ Open |
 | I-07 | 🔵 Informell | Unnötige `camera`-Abhängigkeit | ✅ **[FIXED]** |
-| I-08 | 🔵 Informell | Fehleranfälliger OCR-Fallback-Algorithmus | ⏳ Open (Accepted Risk) |
+| I-08 | 🔵 Informell | Fehleranfälliger OCR-Fallback-Algorithmus | ✅ **[REFINED]** |
 
 ---
 
@@ -182,9 +182,14 @@ Die Methode `_escapeCsvField()` maskiert alle Felder gemäß RFC 4180. Felder mi
 
 **Status:** Offen – Release-APK wird bei jedem Push auf jedem Branch gebaut. Empfehlung: auf `main`-Branch beschränken.
 
-### ⏳ I-08 – OCR-Fallback-Algorithmus
+### ✅ I-08 – [REFINED] OCR-Parsing-Logik verfeinert
 
-**Status:** Accepted Risk – Funktionaler Mangel, kein Sicherheitsproblem im engeren Sinne.
+**Datei:** `lib/services/ocr_service.dart`  
+**Maßnahme:** Die Funktion `_parseItemsImpl` wurde grundlegend überarbeitet:
+- **Header-Ausschluss:** Zeilen mit typischen Bon-Headern (GmbH/OHG, PLZ, Str./Straße, Telefonnummern, USt-IdNr., Datum, Uhrzeit, URLs) werden per Regex-Ausschlussliste gefiltert.
+- **Junk-Präfix-Stripping:** OCR-typische Präfixe (z. B. „CnBio", „unBio", „dnBio") werden vom Zeilenanfang entfernt, ohne den eigentlichen Artikelnamen zu löschen.
+- **Mindestlängen-Filter:** Zeilen mit weniger als 4 Buchstaben werden ausgeschlossen.
+- **Zeichentyp-Filter:** Zeilen, bei denen mehr als 50 % der Zeichen Ziffern oder Sonderzeichen sind (Barcodes, Preiscodes), werden ausgefiltert.
 
 ---
 

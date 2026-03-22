@@ -17,6 +17,7 @@ Eine Flutter-App für Android und iOS zum **Einscannen**, **Speichern** und **Fi
 
 - 📷 **OCR-Scan** – Belege per Kamera fotografieren; Text wird automatisch mit Google ML Kit erkannt
 - 💶 **Betrag-Erkennung** – Regex-basiertes Parsing nach `Total`, `Summe`, `Gesamt` und `€`
+- 🧾 **Verbesserte Artikelerkennung** – Header-Informationen (Store-Name, Adresse, Datum) werden automatisch herausgefiltert; OCR-Artefakte wie Junk-Präfixe (z. B. „CnBio") werden bereinigt
 - 🗂️ **Filter** – Belege nach Tag, Monat und Jahr filtern
 - 📋 **Detail-Ansicht** – Alle erkannten Zeilen als Artikel-Liste im BottomSheet, inklusive automatisch erkannter Einzelpreise
 - 📤 **CSV-Export** – Alle Belege als CSV-Datei exportieren und direkt per E-Mail, Messenger oder in die Cloud teilen
@@ -55,7 +56,8 @@ FAB drücken
                     ├─► GoogleMlKit TextRecognizer  (Haupt-Isolate)
                     ├─► compute(_parseOcrText)      (Background-Isolate)
                     │       ├─► _parseAmount()  (Regex, Schlüsselwörter + Fallback)
-                    │       └─► _parseItems()   (Zeilenweise)
+                    │       └─► _parseItems()   (Header-Filter, Junk-Präfix-Stripping,
+                    │                            Mindestlänge, Zeichentyp-Filter)
                     └─► Receipt-Objekt
                             └─► DatabaseService.insertReceipt()  ──► SQLite
                                     └─► setState → ListView

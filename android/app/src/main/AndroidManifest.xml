@@ -21,6 +21,10 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
+        <!-- ML Kit Text Recognition: Modell beim App-Install herunterladen -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

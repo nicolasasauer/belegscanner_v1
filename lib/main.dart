@@ -7,24 +7,31 @@ import 'pages/home_page.dart';
 
 /// Einstiegspunkt der Belegscanner-App.
 void main() {
-  runZonedGuarded(
-    () async {
-      WidgetsFlutterBinding.ensureInitialized();
+  // WidgetsFlutterBinding muss als allererste Zeile initialisiert werden,
+  // bevor andere Plugins oder Platform-Channels genutzt werden.
+  WidgetsFlutterBinding.ensureInitialized();
 
-      try {
-        // Lokalisierungsdaten für Deutsch initialisieren
-        await initializeDateFormatting('de_DE');
+  try {
+    runZonedGuarded(
+      () async {
+        try {
+          // Lokalisierungsdaten für Deutsch initialisieren
+          await initializeDateFormatting('de_DE');
 
-        runApp(const BelegscannerApp());
-      } catch (e, stackTrace) {
-        debugPrint('Startup-Fehler: $e\n$stackTrace');
-        runApp(ErrorApp(error: e));
-      }
-    },
-    (error, stackTrace) {
-      debugPrint('Zone-Fehler: $error\n$stackTrace');
-    },
-  );
+          runApp(const BelegscannerApp());
+        } catch (e, stackTrace) {
+          debugPrint('Startup-Fehler: $e\n$stackTrace');
+          runApp(ErrorApp(error: e));
+        }
+      },
+      (error, stackTrace) {
+        debugPrint('Zone-Fehler: $error\n$stackTrace');
+      },
+    );
+  } catch (e, stackTrace) {
+    debugPrint('Kritischer Startup-Fehler: $e\n$stackTrace');
+    runApp(ErrorApp(error: e));
+  }
 }
 
 /// Fehler-Screen der beim Start-Absturz angezeigt wird, damit der Fehler lesbar ist.

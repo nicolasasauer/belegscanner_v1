@@ -47,8 +47,8 @@ class _HomePageState extends State<HomePage> {
     symbol: '€',
   );
 
-  /// Formatter für das Anzeigedatum (z. B. "22.03.2026").
-  final DateFormat _dateFormat = DateFormat('dd.MM.yyyy', 'de_DE');
+  /// Formatter für das Anzeigedatum (z. B. "22. März 2026").
+  final DateFormat _dateFormat = DateFormat('d. MMMM yyyy', 'de_DE');
 
   // ---------------------------------------------------------------------------
   // Berechnete Eigenschaften
@@ -103,6 +103,18 @@ class _HomePageState extends State<HomePage> {
         setState(() {
           _receipts.add(receipt);
         });
+
+        // Hinweis anzeigen, wenn kein Betrag erkannt wurde
+        if (receipt.totalAmount == 0.0 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Betrag konnte nicht automatisch erkannt werden. '
+                'Bitte manuell prüfen.',
+              ),
+            ),
+          );
+        }
       }
     } catch (e) {
       // Fehler dem Benutzer anzeigen

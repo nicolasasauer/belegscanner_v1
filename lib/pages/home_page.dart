@@ -181,13 +181,15 @@ class _HomePageState extends State<HomePage> {
     await _databaseService.deleteReceipt(receipt.id);
 
     // Bilddatei vom Speicher entfernen, falls vorhanden
-    final imageFile = File(receipt.imagePath);
-    if (imageFile.existsSync()) {
-      try {
-        await imageFile.delete();
-      } catch (_) {
-        // Datei konnte nicht gelöscht werden (z. B. fehlende Rechte) –
-        // DB-Eintrag wurde bereits entfernt, daher trotzdem fortfahren.
+    if (receipt.imagePath != null) {
+      final imageFile = File(receipt.imagePath!);
+      if (imageFile.existsSync()) {
+        try {
+          await imageFile.delete();
+        } catch (_) {
+          // Datei konnte nicht gelöscht werden (z. B. fehlende Rechte) –
+          // DB-Eintrag wurde bereits entfernt, daher trotzdem fortfahren.
+        }
       }
     }
 
@@ -656,14 +658,7 @@ class _ReceiptListTile extends StatelessWidget {
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: CircleAvatar(
-          backgroundColor:
-              Theme.of(context).colorScheme.primaryContainer,
-          child: Icon(
-            Icons.receipt_outlined,
-            color: Theme.of(context).colorScheme.onPrimaryContainer,
-          ),
-        ),
+        leading: _buildThumbnail(context),
         title: Text(
           // Betrag fett hervorheben
           currencyFormat.format(receipt.totalAmount),
@@ -678,6 +673,46 @@ class _ReceiptListTile extends StatelessWidget {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         onTap: onTap,
+      ),
+    );
+  }
+
+  /// Baut das Thumbnail-Widget links im ListTile.
+  ///
+  /// Zeigt das echte Belegbild (falls vorhanden) oder einen Platzhalter.
+  /// Das Laden wird asynchron durch [Image.file] erledigt; bei fehlendem
+  /// oder korruptem Bild greift der [errorBuilder] auf den Platzhalter zurück.
+  Widget _buildThumbnail(BuildContext context) {
+    final path = receipt.imagePath;
+
+    if (path != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.file(
+          File(path),
+          width: 52,
+          height: 52,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _placeholder(context),
+        ),
+      );
+    }
+    return _placeholder(context);
+  }
+
+  /// Grauer Platzhalter mit Beleg-Icon für Belege ohne Bild.
+  Widget _placeholder(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 52,
+        height: 52,
+        color: Theme.of(context).colorScheme.primaryContainer,
+        alignment: Alignment.center,
+        child: Icon(
+          Icons.receipt_outlined,
+          color: Theme.of(context).colorScheme.onPrimaryContainer,
+        ),
       ),
     );
   }

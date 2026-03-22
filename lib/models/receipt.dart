@@ -14,15 +14,18 @@ class Receipt {
   /// Liste der erkannten Einzelposten.
   final List<String> items;
 
-  /// Dateipfad zum gespeicherten Bild des Belegs.
-  final String imagePath;
+  /// Permanenter Dateipfad zum gespeicherten Bild des Belegs.
+  ///
+  /// Kann `null` sein, wenn für diesen Beleg kein Bild vorhanden ist
+  /// (z. B. bei Altdaten oder nach einem fehlgeschlagenen Kopiervorgang).
+  final String? imagePath;
 
   const Receipt({
     required this.id,
     required this.date,
     required this.totalAmount,
     required this.items,
-    required this.imagePath,
+    this.imagePath,
   });
 
   /// Erstellt eine Kopie des Belegs mit optionalen geänderten Feldern.
@@ -64,7 +67,7 @@ class Receipt {
       date: DateTime.parse(map['date'] as String),
       totalAmount: (map['totalAmount'] as num).toDouble(),
       items: decoded.cast<String>(),
-      imagePath: map['imagePath'] as String,
+      imagePath: map['imagePath'] as String?,
     );
   }
 

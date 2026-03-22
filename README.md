@@ -22,6 +22,7 @@ Eine Flutter-App für Android und iOS zum **Einscannen**, **Speichern** und **Fi
 - 📋 **Detail-Ansicht** – Alle erkannten Zeilen als Artikel-Liste im BottomSheet, inklusive automatisch erkannter Einzelpreise
 - 📤 **CSV-Export** – Alle Belege als CSV-Datei exportieren und direkt per E-Mail, Messenger oder in die Cloud teilen
 - 🗑️ **Löschen** – Belege per Wisch-Geste dauerhaft löschen (inkl. Bilddatei)
+- 🖼️ **Bild-Vorschau** – Originalbild des Belegs direkt als Thumbnail in der Liste sichtbar (lokal gespeichert, Local-First)
 - 🌙 **Material 3** – Light- und Dark-Theme, dynamische Farben (Indigo-Seed)
 - 🌍 **Deutsches Locale** – Euro-Formatierung (`42,50 €`) und deutsche Monatsnamen
 
@@ -81,6 +82,7 @@ Wisch-zum-Löschen
 | `sqflite` | ^2.3.3+1 | Lokale SQLite-Datenbank |
 | `path` | ^1.9.0 | Pfad-Utilities |
 | `share_plus` | ^10.0.0 | CSV-Export per Share-Sheet |
+| `path_provider` | ^2.1.4 | Permanenter App-Speicher für Belegbilder |
 
 ---
 
@@ -167,6 +169,10 @@ belegscanner_v1/
 
 Die gesamte OCR-Verarbeitung findet **ausschließlich auf dem Gerät** statt. Belegbilder und erkannte Texte verlassen den lokalen Speicher nicht durch App-eigenen Code. Alle Daten werden in einer lokalen SQLite-Datenbank (via `sqflite`) gespeichert, auf die nur diese App zugreifen kann.
 
+### Lokale Bildspeicherung (Local-First)
+
+Belegbilder werden **permanent im App-eigenen Dokumenten-Verzeichnis** (`getApplicationDocumentsDirectory()`) gespeichert. Nach dem Scan wird das Bild aus dem temporären Kamera-Cache in dieses permanente Verzeichnis kopiert – so bleiben Bilder auch nach einem App-Neustart oder einer Cache-Bereinigung erhalten. Der Pfad zum Bild wird zusammen mit dem Beleg in der SQLite-Datenbank gespeichert. Beim Löschen eines Belegs wird die Bilddatei ebenfalls vom Gerät entfernt.
+
 ### Google ML Kit – Telemetrie-Hinweis (Befund I-01)
 
 Die App verwendet **Google ML Kit** für die Texterkennung. Google ML Kit ist ein Google-eigenes Framework, das nach dem einmaligen Modell-Download vollständig on-device arbeitet. Es kann jedoch sein, dass das Framework selbst **anonyme Performance- und Nutzungstelemetrie** an Google-Server überträgt. Diese Telemetrie enthält:
@@ -208,4 +214,4 @@ MIT © 2026 Nicolas Asauer
 
 ### 📜 Der Vibe-Check
 
-Diese App ist eine reine KI-Co-Produktion (Vibe Coding). OCR ist verdammt gut, aber nicht perfekt – prüfe Beträge immer kurz nach! Alles bleibt lokal auf deinem Handy (Local-First). Kein Steuerberater-Ersatz, aber dein bester Freund für die Übersicht. 🚀
+Diese App ist eine reine KI-Co-Produktion (Vibe Coding). OCR ist verdammt gut, aber nicht perfekt – prüfe Beträge immer kurz nach! Alles bleibt lokal auf deinem Handy (Local-First): Belegbilder werden permanent im App-Dokumenten-Verzeichnis gespeichert, erscheinen als Thumbnail direkt in der Liste und werden beim Löschen vollständig entfernt. Kein Steuerberater-Ersatz, aber dein bester Freund für die Übersicht. 🚀

@@ -5,7 +5,7 @@ import 'package:intl/date_symbol_data_local.dart';
 
 import 'pages/home_page.dart';
 
-/// Einstiegspunkt der Belegscanner-App.
+/// Einstiegspunkt der Bong-Scanner-App.
 void main() {
   // WidgetsFlutterBinding muss als allererste Zeile initialisiert werden,
   // bevor andere Plugins oder Platform-Channels genutzt werden.
@@ -18,7 +18,7 @@ void main() {
           // Lokalisierungsdaten für Deutsch initialisieren
           await initializeDateFormatting('de_DE');
 
-          runApp(const BelegscannerApp());
+          runApp(const BongScannerApp());
         } catch (e, stackTrace) {
           debugPrint('Startup-Fehler: $e\n$stackTrace');
           runApp(ErrorApp(error: e));
@@ -65,13 +65,13 @@ class ErrorApp extends StatelessWidget {
 }
 
 /// Root-Widget der App mit Material 3 Theme.
-class BelegscannerApp extends StatelessWidget {
-  const BelegscannerApp({super.key});
+class BongScannerApp extends StatelessWidget {
+  const BongScannerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Belegscanner',
+      title: 'Bong-Scanner',
       debugShowCheckedModeBanner: false,
       // Material 3 aktivieren
       theme: ThemeData(

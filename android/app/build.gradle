@@ -1,5 +1,13 @@
 // App-Level Build-Konfiguration
 
+// plugins {} muss als erstes stehen (Gradle DSL-Anforderung)
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // Flutter Gradle Plugin muss nach den Android/Kotlin Plugins stehen
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
 // Read version info written by the Flutter CLI into local.properties
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
@@ -17,13 +25,6 @@ if (flutterVersionCode == null) {
 def flutterVersionName = localProperties.getProperty('flutter.versionName')
 if (flutterVersionName == null) {
     flutterVersionName = '1.0'
-}
-
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    // Flutter Gradle Plugin muss nach den Android/Kotlin Plugins stehen
-    id "dev.flutter.flutter-gradle-plugin"
 }
 
 android {

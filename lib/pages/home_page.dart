@@ -101,7 +101,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final receipt = await _ocrService.scanReceipt();
 
-      if (receipt != null) {
+      if (receipt != null && mounted) {
         setState(() {
           _receipts.add(receipt);
         });
@@ -129,7 +129,7 @@ class _HomePageState extends State<HomePage> {
         );
       }
     } finally {
-      setState(() => _isScanning = false);
+      if (mounted) setState(() => _isScanning = false);
     }
   }
 
@@ -589,34 +589,45 @@ class _ReceiptDetailSheet extends StatelessWidget {
             const SizedBox(height: 8),
 
             Expanded(
-              child: ListView.separated(
-                controller: scrollController,
-                itemCount: receipt.items.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, index) {
-                  final (:name, :price) =
-                      _parseLineItem(receipt.items[index]);
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: Text('\u2022 $name')),
-                        if (price != null) ...[
-                          const SizedBox(width: 8),
-                          Text(
-                            currencyFormat.format(price),
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(fontWeight: FontWeight.w500),
+              child: receipt.items.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Keine Positionen erkannt.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                    )
+                  : ListView.separated(
+                      controller: scrollController,
+                      itemCount: receipt.items.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, index) {
+                        final (:name, :price) =
+                            _parseLineItem(receipt.items[index]);
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: Text('\u2022 $name')),
+                              if (price != null) ...[
+                                const SizedBox(width: 8),
+                                Text(
+                                  currencyFormat.format(price),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w500),
+                                ),
+                              ],
+                            ],
                           ),
-                        ],
-                      ],
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
             ),
           ],
         ),

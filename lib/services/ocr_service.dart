@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/receipt.dart';
@@ -136,10 +138,10 @@ class OcrService {
   }
 
   /// Verarbeitet ein Bild und erstellt einen [Receipt] aus dem erkannten Text.
-  Future<Receipt> _processImage(String imagePath) async {
+  Future<Receipt> _processImage(String tempImagePath) async {
     // Text via Google ML Kit erkennen (muss auf dem Haupt-Isolate laufen,
     // da Platform Channels verwendet werden)
-    final inputImage = InputImage.fromFilePath(imagePath);
+    final inputImage = InputImage.fromFilePath(tempImagePath);
     final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
     final RecognizedText recognizedText;
@@ -152,6 +154,11 @@ class OcrService {
 
     final fullText = recognizedText.text;
 
+    // Bild permanent speichern: aus dem temporären Cache-Verzeichnis in das
+    // app-private Dokumenten-Verzeichnis kopieren, damit es auch nach dem
+    // App-Neustart noch vorhanden ist.
+    final String? permanentImagePath = await _persistImage(tempImagePath);
+
     // Parsing im Background-Isolate ausführen, damit der UI-Thread
     // (insbesondere der CircularProgressIndicator) nicht blockiert wird
     final result = await compute(_parseOcrText, fullText);
@@ -161,8 +168,32 @@ class OcrService {
       date: DateTime.now(),
       totalAmount: result['amount'] as double,
       items: List<String>.from(result['items'] as List),
-      imagePath: imagePath,
+      imagePath: permanentImagePath,
     );
+  }
+
+  /// Kopiert das Bild von [tempPath] in das permanente App-Dokumenten-
+  /// Verzeichnis und gibt den neuen Pfad zurück.
+  ///
+  /// Gibt `null` zurück, wenn der Kopiervorgang fehlschlägt, sodass der
+  /// Beleg ohne Bild gespeichert werden kann.
+  Future<String?> _persistImage(String tempPath) async {
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final imagesDir = Directory(p.join(docsDir.path, 'receipt_images'));
+      if (!imagesDir.existsSync()) {
+        await imagesDir.create(recursive: true);
+      }
+      // UUID als Dateiname, um Kollisionen zuverlässig zu vermeiden
+      final fileName = '${_uuid.v4()}${p.extension(tempPath)}';
+      final permanentFile = File(p.join(imagesDir.path, fileName));
+      await File(tempPath).copy(permanentFile.path);
+      return permanentFile.path;
+    } catch (e, st) {
+      // Fehler beim Kopieren: Beleg wird ohne Bild gespeichert
+      debugPrint('[OcrService] Bild konnte nicht persistiert werden: $e\n$st');
+      return null;
+    }
   }
 
   /// Prüft, ob die Bilddatei noch auf dem Gerät vorhanden ist.

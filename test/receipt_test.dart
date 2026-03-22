@@ -23,6 +23,17 @@ void main() {
       expect(receipt.imagePath, equals('/tmp/test_receipt.jpg'));
     });
 
+    test('Erstellt ein Receipt ohne imagePath (null)', () {
+      final receipt = Receipt(
+        id: 'no-image',
+        date: DateTime(2026, 3, 22),
+        totalAmount: 5.00,
+        items: [],
+      );
+
+      expect(receipt.imagePath, isNull);
+    });
+
     test('copyWith übernimmt alle unveränderten Felder', () {
       final original = Receipt(
         id: 'abc',
@@ -146,6 +157,19 @@ void main() {
 
       final receipt = Receipt.fromMap(map);
       expect(receipt.items, isEmpty);
+    });
+
+    test('fromMap mit null imagePath (Altdaten ohne Bild)', () {
+      final map = {
+        'id': 'no-image',
+        'date': '2026-01-01T00:00:00.000',
+        'totalAmount': 0.0,
+        'items': '[]',
+        'imagePath': null,
+      };
+
+      final receipt = Receipt.fromMap(map);
+      expect(receipt.imagePath, isNull);
     });
   });
 

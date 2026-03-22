@@ -131,6 +131,8 @@ Alle Belege werden ausschließlich im Arbeitsspeicher gehalten. Bei einem App-Ne
 
 **Hinweis:** Dies ist primär ein funktionaler Mangel. Aus Sicherheitsperspektive positiv: Es existiert keine lokale Datenbank, die ohne Verschlüsselung auf dem Gerät persistiert.
 
+**Update I-02 [REFINED]:** Bild-Persistenz ist jetzt aktiv. Belegbilder werden beim Scan aus dem temporären Kamera-Cache in das permanente App-Dokumenten-Verzeichnis (`getApplicationDocumentsDirectory()/receipt_images/`) kopiert. Der Dateipfad wird im `imagePath`-Feld der SQLite-Datenbank gespeichert. Beim Löschen eines Belegs wird auch die Bilddatei entfernt. Die Beleg-Daten (Betrag, Datum, Artikel) sind ebenfalls dauerhaft in SQLite persistiert und überleben App-Neustarts.
+
 #### I-03 – Keine Funktion zum Löschen von Belegen oder Bildern
 **Datei:** `lib/pages/home_page.dart`  
 **Beschreibung:**  
@@ -144,6 +146,8 @@ Die App bietet keine Möglichkeit, einzelne Belege aus der Liste zu entfernen od
 Belegbilder werden im Klartext im App-Verzeichnis oder externen Speicher abgelegt. Belege können hochsensible Informationen enthalten (Kaufverhalten, Beträge, Händler, Medikamentenkäufe). Auf einem nicht-gerooteten Android-Gerät sind App-interne Dateien vor anderen Apps geschützt. Auf einem gerooteten Gerät oder bei Geräteverlust (ohne Bildschirmsperre) ist der Zugriff möglich.
 
 **Empfehlung:** Für produktive Anwendungen die Bildverschlüsselung über die Android Keystore API oder Flutter Secure Storage in Betracht ziehen.
+
+**Update I-04 [REFINED]:** Bild-Persistenz ist jetzt aktiv. Belegbilder werden permanent im App-eigenen Dokumenten-Verzeichnis (`getApplicationDocumentsDirectory()`) gespeichert – einem App-privaten, nicht öffentlich zugänglichen Verzeichnis. Auf einem nicht-gerooteten Gerät sind diese Dateien vor anderen Apps geschützt. Die Bilder sind weiterhin unverschlüsselt. Für produktive Anwendungen mit sensiblen Finanzdaten bleibt die Empfehlung zur Bildverschlüsselung bestehen.
 
 #### I-05 – Nicht gepinnte GitHub Actions (Supply-Chain-Risiko)
 **Datei:** `.github/workflows/main.yml`  
@@ -217,7 +221,7 @@ Der Fallback-Algorithmus gibt einfach den *größten* erkannten numerischen Wert
 | Schadhafte Nativ-Bibliotheken | ✅ Nicht gefunden |
 | Verdächtige Berechtigungen (über App-Zweck hinaus) | ✅ Keine exzessiven Berechtigungen |
 | Verdächtige Drittanbieter-SDKs | ℹ️ Nur Google ML Kit (Framework-Telemetrie möglich) |
-| Datenbank mit verschlüsseltem Inhalt | ✅ Keine Datenbank vorhanden |
+| Datenbank mit verschlüsseltem Inhalt | ℹ️ SQLite-Datenbank vorhanden, unverschlüsselt (für persönlichen Gebrauch akzeptabel) |
 | Ungewöhnliche JNI-/NDK-Aufrufe | ✅ Nicht gefunden |
 
 **Ergebnis:** Es wurden **keine Backdoors, kein Virencode und keine aktiven Datenabflüsse** im Quellcode gefunden. Der gesamte Dart-Code verhält sich entsprechend der beschriebenen App-Funktionalität.

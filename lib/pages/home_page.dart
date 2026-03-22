@@ -554,7 +554,7 @@ class _HomePageState extends State<HomePage> {
                       onTap: () => setState(() => _isFabExpanded = false),
                       behavior: HitTestBehavior.opaque,
                       child: Container(
-                        color: colorScheme.scrim.withValues(alpha: 0.25),
+                        color: colorScheme.scrim.withOpacity(0.25),
                       ),
                     ),
                   ),
@@ -564,7 +564,7 @@ class _HomePageState extends State<HomePage> {
                   BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
                     child: Container(
-                      color: colorScheme.scrim.withValues(alpha: 0.15),
+                      color: colorScheme.scrim.withOpacity(0.15),
                       alignment: Alignment.center,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,

@@ -19,6 +19,8 @@ Eine Flutter-App für Android und iOS zum **Einscannen**, **Speichern** und **Fi
 - 💶 **Betrag-Erkennung** – Regex-basiertes Parsing nach `Total`, `Summe`, `Gesamt` und `€`
 - 🗂️ **Filter** – Belege nach Tag, Monat und Jahr filtern
 - 📋 **Detail-Ansicht** – Alle erkannten Zeilen als Artikel-Liste im BottomSheet, inklusive automatisch erkannter Einzelpreise
+- 📤 **CSV-Export** – Alle Belege als CSV-Datei exportieren und direkt per E-Mail, Messenger oder in die Cloud teilen
+- 🗑️ **Löschen** – Belege per Wisch-Geste dauerhaft löschen (inkl. Bilddatei)
 - 🌙 **Material 3** – Light- und Dark-Theme, dynamische Farben (Indigo-Seed)
 - 🌍 **Deutsches Locale** – Euro-Formatierung (`42,50 €`) und deutsche Monatsnamen
 
@@ -56,11 +58,13 @@ FAB drücken
 
 | Paket | Version | Zweck |
 |---|---|---|
-| `camera` | ^0.10.5+9 | Kamera-Zugriff |
 | `google_mlkit_text_recognition` | ^0.13.1 | OCR-Texterkennung |
 | `image_picker` | ^1.1.2 | Foto aus Kamera oder Galerie |
 | `intl` | ^0.19.0 | Datum- und Währungsformatierung |
 | `uuid` | ^4.4.2 | Eindeutige Beleg-IDs |
+| `sqflite` | ^2.3.3+1 | Lokale SQLite-Datenbank |
+| `path` | ^1.9.0 | Pfad-Utilities |
+| `share_plus` | ^10.0.0 | CSV-Export per Share-Sheet |
 
 ---
 
@@ -136,6 +140,33 @@ belegscanner_v1/
 ├── screenshots/               # App-Mockup-Screenshots
 └── pubspec.yaml
 ```
+
+---
+
+## 🛡️ Datenschutz & Sicherheit
+
+### On-Device-Verarbeitung
+
+Die gesamte OCR-Verarbeitung findet **ausschließlich auf dem Gerät** statt. Belegbilder und erkannte Texte verlassen den lokalen Speicher nicht durch App-eigenen Code. Alle Daten werden in einer lokalen SQLite-Datenbank (via `sqflite`) gespeichert, auf die nur diese App zugreifen kann.
+
+### Google ML Kit – Telemetrie-Hinweis (Befund I-01)
+
+Die App verwendet **Google ML Kit** für die Texterkennung. Google ML Kit ist ein Google-eigenes Framework, das nach dem einmaligen Modell-Download vollständig on-device arbeitet. Es kann jedoch sein, dass das Framework selbst **anonyme Performance- und Nutzungstelemetrie** an Google-Server überträgt. Diese Telemetrie enthält:
+
+- ✅ **Keine** Bildinhalte oder gescannten Texte
+- ✅ **Keine** erkannten Beträge oder Händlernamen
+- ✅ **Keine** persönlichen Daten aus den Belegen
+- ℹ️ Möglicherweise: anonyme Framework-Metriken (Verarbeitungszeit, SDK-Version, Gerätekategorie)
+
+Für höchste Datenschutzanforderungen kann alternativ `flutter_tesseract_ocr` (vollständig offline, kein Google-Framework) evaluiert werden.
+
+### Export-Funktion
+
+Der CSV-Export erstellt eine temporäre Datei im App-eigenen Cache-Verzeichnis und öffnet das native Share-Sheet des Betriebssystems. Die Datei verlässt das Gerät nur durch die vom Nutzer explizit gewählte Sharing-Option (E-Mail, Messenger, Cloud-Speicher etc.).
+
+### Datenlöschung
+
+Belege können über die Wisch-zum-Löschen-Geste dauerhaft entfernt werden. Dabei werden sowohl der Datenbankeintrag als auch die zugehörige Bilddatei gelöscht.
 
 ---
 

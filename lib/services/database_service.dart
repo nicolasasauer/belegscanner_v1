@@ -77,6 +77,20 @@ class DatabaseService {
     );
   }
 
+  /// Gibt den vollständigen Pfad zur Datenbankdatei zurück.
+  Future<String> getDatabaseFilePath() async {
+    final dbPath = await getDatabasesPath();
+    return p.join(dbPath, _dbName);
+  }
+
+  /// Gibt das Verzeichnis zurück, in dem die Datenbank gespeichert ist.
+  ///
+  /// Dieses Verzeichnis ist app-privat und beschreibbar – geeignet für
+  /// temporäre Export-Dateien.
+  Future<String> getDatabasesDirectory() async {
+    return getDatabasesPath();
+  }
+
   /// Schließt die Datenbankverbindung.
   Future<void> close() async {
     try {

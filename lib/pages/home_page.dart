@@ -3,6 +3,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:path/path.dart' as p;
+import 'package:share_plus/share_plus.dart';
 
 import '../models/receipt.dart';
 import '../services/database_service.dart';
@@ -193,6 +195,86 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Exportiert alle Belege als CSV-Datei und teilt sie über das native Share-Sheet.
+  ///
+  /// Spalten: Datum, Händler (falls erkannt), Gesamtbetrag, Artikel (semikolon-getrennt).
+  Future<void> _exportToCsv() async {
+    if (_receipts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Keine Belege zum Exportieren vorhanden.')),
+      );
+      return;
+    }
+
+    try {
+      final buffer = StringBuffer();
+      // CSV-Header
+      buffer.writeln('Datum;Händler;Gesamtbetrag (EUR);Artikel');
+
+      final amountFormat = NumberFormat('#,##0.00', 'de_DE');
+      final exportDateFormat = DateFormat('yyyy-MM-dd', 'de_DE');
+
+      for (final receipt in _receipts) {
+        final date = exportDateFormat.format(receipt.date);
+        // Händler: erste OCR-Zeile als best-effort-Näherungswert für den
+        // Händlernamen. OCR-Text ist nicht immer in dieser Reihenfolge –
+        // dies ist eine Heuristik ohne Garantie.
+        final merchant = receipt.items.isNotEmpty
+            ? _escapeCsvField(receipt.items.first)
+            : '';
+        final amount = amountFormat.format(receipt.totalAmount);
+        // Artikel: alle Zeilen außer der ersten (Händler), durch Pipe getrennt
+        final items = receipt.items.length > 1
+            ? _escapeCsvField(receipt.items.sublist(1).join(' | '))
+            : '';
+
+        buffer.writeln('$date;$merchant;$amount;$items');
+      }
+
+      // Temporäre Datei im App-Cache-Verzeichnis anlegen
+      final cacheDir = await _getCacheDirectory();
+      final file = File(p.join(cacheDir, 'belege_export.csv'));
+      await file.writeAsString(buffer.toString(), flush: true);
+
+      if (!mounted) return;
+
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: 'Belegscanner Export',
+        text: 'Exportierte Belege aus der Belegscanner-App.',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Export fehlgeschlagen. Bitte versuche es erneut.',
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Gibt das app-private Verzeichnis zurück, das für temporäre Export-Dateien
+  /// genutzt wird. Delegiert an [DatabaseService.getDatabasesDirectory].
+  Future<String> _getCacheDirectory() async {
+    return _databaseService.getDatabasesDirectory();
+  }
+
+  /// Maskiert ein CSV-Feld gemäß RFC 4180:
+  /// Enthält das Feld ein Semikolon oder Anführungszeichen,
+  /// wird es in doppelte Anführungszeichen eingeschlossen.
+  String _escapeCsvField(String value) {
+    // Zeilenumbrüche durch Leerzeichen ersetzen
+    final cleaned = value.replaceAll('\n', ' ').replaceAll('\r', '');
+    if (cleaned.contains(';') || cleaned.contains('"')) {
+      return '"${cleaned.replaceAll('"', '""')}"';
+    }
+    return cleaned;
+  }
+
   /// Zeigt die Detail-Ansicht eines Belegs in einem BottomSheet.
   void _showReceiptDetails(Receipt receipt) {
     showModalBottomSheet(
@@ -223,6 +305,13 @@ class _HomePageState extends State<HomePage> {
         title: const Text('Belegscanner'),
         centerTitle: true,
         actions: [
+          // CSV-Export-Button
+          if (_receipts.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.upload_file_outlined),
+              tooltip: 'Belege als CSV exportieren',
+              onPressed: _isScanning ? null : _exportToCsv,
+            ),
           // Filter zurücksetzen
           if (_selectedDay != null ||
               _selectedMonth != null ||

@@ -28,6 +28,9 @@ dependencies:
   # Pfad-Utilities (wird von sqflite benötigt)
   path: ^1.9.0
 
+  # Datei-Sharing (CSV-Export per E-Mail, Messenger, Cloud)
+  share_plus: ^10.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

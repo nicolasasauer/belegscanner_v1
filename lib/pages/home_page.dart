@@ -10,7 +10,7 @@ import '../models/receipt.dart';
 import '../services/database_service.dart';
 import '../services/ocr_service.dart';
 
-/// Hauptseite der Belegscanner-App.
+/// Hauptseite der Bong-Scanner-App.
 ///
 /// Zeigt eine gefilterte Liste der gescannten Belege und ermöglicht
 /// das Starten eines neuen Scans über den FloatingActionButton.
@@ -342,8 +342,8 @@ class _HomePageState extends State<HomePage> {
 
       await Share.shareXFiles(
         [XFile(file.path, mimeType: 'text/csv')],
-        subject: 'Belegscanner Export',
-        text: 'Exportierte Belege aus der Belegscanner-App.',
+        subject: 'Bong-Scanner Export',
+        text: 'Exportierte Belege aus der Bong-Scanner-App.',
       );
     } catch (e) {
       if (mounted) {
@@ -419,7 +419,7 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(color: colorScheme.onSurface),
                 onChanged: (value) => setState(() => _searchQuery = value),
               )
-            : const Text('Belegscanner'),
+            : const Text('Bong-Scanner'),
         centerTitle: !_isSearching,
         actions: [
           // Such-Icon / Schließen-Icon
@@ -554,7 +554,7 @@ class _HomePageState extends State<HomePage> {
                       onTap: () => setState(() => _isFabExpanded = false),
                       behavior: HitTestBehavior.opaque,
                       child: Container(
-                        color: colorScheme.scrim.withOpacity(0.25),
+                        color: colorScheme.scrim.withValues(alpha: 0.25),
                       ),
                     ),
                   ),
@@ -564,7 +564,7 @@ class _HomePageState extends State<HomePage> {
                   BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
                     child: Container(
-                      color: colorScheme.scrim.withOpacity(0.15),
+                      color: colorScheme.scrim.withValues(alpha: 0.15),
                       alignment: Alignment.center,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,

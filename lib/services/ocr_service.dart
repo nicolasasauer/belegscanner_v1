@@ -123,9 +123,25 @@ class OcrService {
   ///
   /// Gibt einen [Receipt] zurück oder `null`, wenn der Vorgang abgebrochen wurde.
   Future<Receipt?> scanReceipt() async {
-    // Kamera öffnen und Foto aufnehmen
+    return _pickAndProcess(ImageSource.camera);
+  }
+
+  /// Öffnet die Galerie, wählt ein Bild aus und erkennt den Text per OCR.
+  ///
+  /// Gibt einen [Receipt] zurück oder `null`, wenn der Vorgang abgebrochen wurde.
+  Future<Receipt?> importFromGallery() async {
+    return _pickAndProcess(ImageSource.gallery);
+  }
+
+  /// Gemeinsame Implementierung für Kamera- und Galerie-Import.
+  ///
+  /// Öffnet die angegebene [source] (Kamera oder Galerie), gibt `null` zurück,
+  /// wenn der Vorgang abgebrochen wird, und delegiert die Verarbeitung an
+  /// [_processImage]. Beide Quellen durchlaufen identisch die OCR-Pipeline
+  /// und die Thumbnail-Speicherlogik.
+  Future<Receipt?> _pickAndProcess(ImageSource source) async {
     final XFile? imageFile = await _picker.pickImage(
-      source: ImageSource.camera,
+      source: source,
       imageQuality: 90,
     );
 

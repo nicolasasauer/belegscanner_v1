@@ -26,10 +26,10 @@ class _HomePageState extends State<HomePage> {
   // Zustand
   // ---------------------------------------------------------------------------
 
-  /// Alle gespeicherten Belege.
+  /// Alle gespeicherten Belege (Master-Liste – wird nie direkt angezeigt).
   final List<Receipt> _receipts = [];
 
-  /// Gibt an, ob aktuell ein Scan läuft.
+  /// Gibt an, ob aktuell ein Scan/Import läuft.
   bool _isScanning = false;
 
   /// Ausgewählter Tag für den Filter (null = kein Filter).
@@ -40,6 +40,18 @@ class _HomePageState extends State<HomePage> {
 
   /// Ausgewähltes Jahr für den Filter (null = kein Filter).
   int? _selectedYear;
+
+  /// Controller für die Suchleiste.
+  final TextEditingController _searchController = TextEditingController();
+
+  /// Aktueller Suchbegriff (leer = kein Suchfilter).
+  String _searchQuery = '';
+
+  /// Gibt an, ob die Suchleiste in der AppBar aktiv ist.
+  bool _isSearching = false;
+
+  /// Gibt an, ob das FAB-Geschwindigkeitsdial-Menü geöffnet ist.
+  bool _isFabExpanded = false;
 
   // ---------------------------------------------------------------------------
   // Services & Formatter
@@ -70,6 +82,12 @@ class _HomePageState extends State<HomePage> {
     Future.delayed(const Duration(milliseconds: 500), _loadReceipts);
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   /// Lädt alle gespeicherten Belege aus der lokalen Datenbank.
   Future<void> _loadReceipts() async {
     final receipts = await _databaseService.getAllReceipts();
@@ -87,8 +105,13 @@ class _HomePageState extends State<HomePage> {
   // ---------------------------------------------------------------------------
 
   /// Gibt die gefilterte Beleg-Liste zurück.
+  ///
+  /// Kombiniert Datum-Filter (Tag/Monat/Jahr) mit dem Volltext-Suchfilter.
+  /// Der Suchfilter prüft Händlername (erster Artikel), Gesamtbetrag und
+  /// alle Stichwörter in den erkannten Einzelpositionen.
   List<Receipt> get _filteredReceipts {
     return _receipts.where((receipt) {
+      // Datum-Filter
       if (_selectedDay != null && receipt.date.day != _selectedDay) {
         return false;
       }
@@ -98,6 +121,29 @@ class _HomePageState extends State<HomePage> {
       if (_selectedYear != null && receipt.date.year != _selectedYear) {
         return false;
       }
+
+      // Volltext-Suchfilter
+      if (_searchQuery.isNotEmpty) {
+        final q = _searchQuery.toLowerCase();
+
+        // Händlername: erste OCR-Zeile als Heuristik
+        final matchesMerchant = receipt.items.isNotEmpty &&
+            receipt.items.first.toLowerCase().contains(q);
+
+        // Gesamtbetrag: Zahl und formatierter String
+        final matchesAmount =
+            receipt.totalAmount.toString().contains(q) ||
+                _currencyFormat.format(receipt.totalAmount).contains(q);
+
+        // Stichwörter in allen erkannten Einzelpositionen
+        final matchesItems =
+            receipt.items.any((item) => item.toLowerCase().contains(q));
+
+        if (!matchesMerchant && !matchesAmount && !matchesItems) {
+          return false;
+        }
+      }
+
       return true;
     }).toList();
   }
@@ -174,6 +220,57 @@ class _HomePageState extends State<HomePage> {
       _selectedMonth = null;
       _selectedYear = null;
     });
+  }
+
+  /// Schließt die Suchleiste und löscht den Suchbegriff.
+  void _clearSearch() {
+    setState(() {
+      _searchController.clear();
+      _searchQuery = '';
+      _isSearching = false;
+    });
+  }
+
+  /// Importiert einen Beleg aus der Gerätegalerie, führt OCR aus und speichert
+  /// das Ergebnis – identische Pipeline wie [_startScan].
+  Future<void> _importFromGallery() async {
+    setState(() => _isScanning = true);
+
+    try {
+      final receipt = await _ocrService.importFromGallery();
+
+      if (receipt != null && mounted) {
+        await _databaseService.insertReceipt(receipt);
+        setState(() {
+          _receipts.add(receipt);
+        });
+
+        if (receipt.totalAmount == 0.0 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Betrag konnte nicht automatisch erkannt werden. '
+                'Bitte manuell prüfen.',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Hoppla, da ist beim Importieren etwas schiefgelaufen. '
+              'Bitte versuche es erneut.',
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isScanning = false);
+    }
   }
 
   /// Löscht einen Beleg aus der Datenbank und entfernt ggf. die Bilddatei.
@@ -307,27 +404,56 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Belegscanner'),
-        centerTitle: true,
+        // Suche aktiv → Suchfeld im Titel; sonst normaler Titel
+        title: _isSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Händler, Betrag, Stichwort…',
+                  border: InputBorder.none,
+                  hintStyle: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                style: TextStyle(color: colorScheme.onSurface),
+                onChanged: (value) => setState(() => _searchQuery = value),
+              )
+            : const Text('Belegscanner'),
+        centerTitle: !_isSearching,
         actions: [
-          // CSV-Export-Button
-          if (_receipts.isNotEmpty)
+          // Such-Icon / Schließen-Icon
+          if (_isSearching)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: 'Suche schließen',
+              onPressed: _clearSearch,
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.search),
+              tooltip: 'Belege durchsuchen',
+              onPressed: () => setState(() => _isSearching = true),
+            ),
+          // CSV-Export-Button (nur wenn nicht in Suche)
+          if (_receipts.isNotEmpty && !_isSearching)
             IconButton(
               icon: const Icon(Icons.upload_file_outlined),
               tooltip: 'Belege als CSV exportieren',
               onPressed: _isScanning ? null : _exportToCsv,
             ),
-          // Filter zurücksetzen
-          if (_selectedDay != null ||
-              _selectedMonth != null ||
-              _selectedYear != null)
+          // Filter zurücksetzen (nur wenn nicht in Suche)
+          if ((_selectedDay != null ||
+                  _selectedMonth != null ||
+                  _selectedYear != null) &&
+              !_isSearching)
             IconButton(
               icon: const Icon(Icons.filter_alt_off),
               tooltip: 'Filter zurücksetzen',
               onPressed: _clearFilters,
             ),
         ],
-        // Ladeindikator direkt unter der AppBar während des Scans
+        // Ladeindikator direkt unter der AppBar während des Scans/Imports
         bottom: _isScanning
             ? const PreferredSize(
                 preferredSize: Size.fromHeight(4),
@@ -421,7 +547,19 @@ class _HomePageState extends State<HomePage> {
                         },
                       ),
 
-                // Scan-Overlay: Glassmorphism-Effekt mit Unschärfe
+                // FAB-Menü-Hintergrund: schließt das Menü beim Antippen
+                if (_isFabExpanded)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _isFabExpanded = false),
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        color: colorScheme.scrim.withOpacity(0.25),
+                      ),
+                    ),
+                  ),
+
+                // Scan/Import-Overlay: Glassmorphism-Effekt mit Unschärfe
                 if (_isScanning)
                   BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
@@ -434,7 +572,7 @@ class _HomePageState extends State<HomePage> {
                           const CircularProgressIndicator(),
                           const SizedBox(height: 16),
                           Text(
-                            'Scan l\u00E4uft...',
+                            'Verarbeitung läuft…',
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium
@@ -449,12 +587,69 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isScanning ? null : _startScan,
-        icon: const Icon(Icons.document_scanner_outlined),
-        label: const Text('Beleg scannen'),
-        tooltip: 'Neuen Beleg scannen',
-      ),
+      floatingActionButton: _buildFab(context),
+    );
+  }
+
+  /// Baut den Speed-Dial FloatingActionButton.
+  ///
+  /// Zeigt zwei Mini-FABs (Kamera + Galerie), die sich animiert ein-/ausblenden.
+  Widget _buildFab(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        // Galerie-Option
+        AnimatedSlide(
+          offset: _isFabExpanded ? Offset.zero : const Offset(0, 0.5),
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          child: AnimatedOpacity(
+            opacity: _isFabExpanded ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 200),
+            child: IgnorePointer(
+              ignoring: !_isFabExpanded,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _FabMenuItem(
+                    icon: Icons.photo_library_outlined,
+                    label: 'Bilder Import',
+                    onPressed: () {
+                      setState(() => _isFabExpanded = false);
+                      _importFromGallery();
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _FabMenuItem(
+                    icon: Icons.camera_alt_outlined,
+                    label: 'Kamera Scan',
+                    onPressed: () {
+                      setState(() => _isFabExpanded = false);
+                      _startScan();
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // Haupt-FAB
+        FloatingActionButton(
+          heroTag: 'mainFab',
+          onPressed: _isScanning
+              ? null
+              : () => setState(() => _isFabExpanded = !_isFabExpanded),
+          tooltip: _isFabExpanded ? 'Menü schließen' : 'Beleg hinzufügen',
+          child: AnimatedRotation(
+            turns: _isFabExpanded ? 0.125 : 0.0,
+            duration: const Duration(milliseconds: 200),
+            child: const Icon(Icons.add),
+          ),
+        ),
+      ],
     );
   }
 
@@ -474,7 +669,7 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 16),
             Text(
               _receipts.isEmpty
-                  ? 'Noch keine Belege vorhanden.\nTippe auf „Beleg scannen", um loszulegen.'
+                  ? 'Noch keine Belege vorhanden.\nTippe auf „Beleg hinzufügen", um loszulegen.'
                   : 'Keine Belege für den gewählten Filter.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -484,6 +679,50 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// =============================================================================
+// FAB-Menü-Element Widget
+// =============================================================================
+
+/// Ein Element im Speed-Dial FAB-Menü mit Label und Mini-FAB.
+class _FabMenuItem extends StatelessWidget {
+  const _FabMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          elevation: 2,
+          borderRadius: BorderRadius.circular(8),
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        FloatingActionButton.small(
+          heroTag: label,
+          onPressed: onPressed,
+          child: Icon(icon),
+        ),
+      ],
     );
   }
 }

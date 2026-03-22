@@ -1,17 +1,77 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/receipt.dart';
 
+// ---------------------------------------------------------------------------
+// Top-level Parsing-Funktionen (erforderlich für compute-Isolate)
+// ---------------------------------------------------------------------------
+
+/// Extrahiert den Gesamtbetrag aus dem OCR-Text.
+///
+/// Sucht nach deutschen Schlüsselwörtern wie "Summe", "Gesamtbetrag",
+/// "Zahlbetrag", "Total", "Bar" sowie dem Euro-Zeichen und parst den
+/// zugehörigen Betrag. Unterstützt Punkt und Komma als Dezimaltrenner
+/// (z. B. 14,95 und 14.95).
+double _parseAmountImpl(String text) {
+  // Erweiterte Schlüsselwörter für deutsche Belege
+  final RegExp amountRegex = RegExp(
+    r'(?:gesamtbetrag|zahlbetrag|total|summe|gesamt|betrag|amount|bar|€|eur)\D*'
+    r'(\d{1,6}[.,]\d{2})',
+    caseSensitive: false,
+  );
+
+  final match = amountRegex.firstMatch(text);
+  if (match != null) {
+    // Komma als Dezimaltrenner (z. B. 14,95) in Punkt umwandeln
+    final rawAmount = match.group(1)!.replaceAll(',', '.');
+    return double.tryParse(rawAmount) ?? 0.0;
+  }
+
+  // Fallback: größten Betrag im Text suchen
+  final RegExp fallbackRegex = RegExp(r'(\d{1,6}[.,]\d{2})');
+  double maxAmount = 0.0;
+  for (final m in fallbackRegex.allMatches(text)) {
+    final value = double.tryParse(m.group(1)!.replaceAll(',', '.')) ?? 0.0;
+    if (value > maxAmount) {
+      maxAmount = value;
+    }
+  }
+  return maxAmount;
+}
+
+/// Zerlegt den OCR-Text in Einzelzeilen und filtert leere Zeilen heraus.
+List<String> _parseItemsImpl(String text) {
+  return text
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty && line.length > 1)
+      .toList();
+}
+
+/// Top-level-Funktion für [compute]: Parst OCR-Text und gibt Betrag und
+/// Artikel-Liste zurück.
+Map<String, dynamic> _parseOcrText(String text) {
+  return {
+    'amount': _parseAmountImpl(text),
+    'items': _parseItemsImpl(text),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OcrService
+// ---------------------------------------------------------------------------
+
 /// Service-Klasse für OCR-Texterkennung und Beleg-Parsing.
 ///
 /// Kapselt die gesamte Logik für:
 ///   - Bildaufnahme via Kamera
 ///   - Texterkennung mit Google ML Kit
-///   - Parsing des erkannten Textes (Betrag, Artikel)
+///   - Parsing des erkannten Textes (Betrag, Artikel) im Background-Isolate
 class OcrService {
   final ImagePicker _picker = ImagePicker();
   final _uuid = const Uuid();
@@ -36,7 +96,8 @@ class OcrService {
 
   /// Verarbeitet ein Bild und erstellt einen [Receipt] aus dem erkannten Text.
   Future<Receipt> _processImage(String imagePath) async {
-    // Text via Google ML Kit erkennen
+    // Text via Google ML Kit erkennen (muss auf dem Haupt-Isolate laufen,
+    // da Platform Channels verwendet werden)
     final inputImage = InputImage.fromFilePath(imagePath);
     final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
@@ -50,59 +111,17 @@ class OcrService {
 
     final fullText = recognizedText.text;
 
-    // Betrag aus dem erkannten Text extrahieren
-    final double totalAmount = _parseAmount(fullText);
-
-    // Einzelzeilen als Artikel-Liste verwenden
-    final List<String> items = _parseItems(fullText);
+    // Parsing im Background-Isolate ausführen, damit der UI-Thread
+    // (insbesondere der CircularProgressIndicator) nicht blockiert wird
+    final result = await compute(_parseOcrText, fullText);
 
     return Receipt(
       id: _uuid.v4(),
       date: DateTime.now(),
-      totalAmount: totalAmount,
-      items: items,
+      totalAmount: result['amount'] as double,
+      items: List<String>.from(result['items'] as List),
       imagePath: imagePath,
     );
-  }
-
-  /// Extrahiert den Gesamtbetrag aus dem OCR-Text.
-  ///
-  /// Sucht nach Schlüsselwörtern wie "Total", "Summe", "Gesamt" oder dem
-  /// Euro-Zeichen und parst den zugehörigen Betrag.
-  double _parseAmount(String text) {
-    // Regex: Schlüsselwörter gefolgt von optionalem Whitespace und einem Betrag
-    // Unterstützt: "Total 12,50", "Summe: 8.99 €", "Gesamt 100,00 EUR"
-    final RegExp amountRegex = RegExp(
-      r'(?:total|summe|gesamt|betrag|amount|€|eur)\D*'
-      r'(\d{1,6}[.,]\d{2})',
-      caseSensitive: false,
-    );
-
-    final match = amountRegex.firstMatch(text);
-    if (match != null) {
-      final rawAmount = match.group(1)!.replaceAll(',', '.');
-      return double.tryParse(rawAmount) ?? 0.0;
-    }
-
-    // Fallback: größten Betrag im Text suchen
-    final RegExp fallbackRegex = RegExp(r'(\d{1,6}[.,]\d{2})');
-    double maxAmount = 0.0;
-    for (final m in fallbackRegex.allMatches(text)) {
-      final value = double.tryParse(m.group(1)!.replaceAll(',', '.')) ?? 0.0;
-      if (value > maxAmount) {
-        maxAmount = value;
-      }
-    }
-    return maxAmount;
-  }
-
-  /// Zerlegt den OCR-Text in Einzelzeilen und filtert leere Zeilen heraus.
-  List<String> _parseItems(String text) {
-    return text
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty && line.length > 1)
-        .toList();
   }
 
   /// Prüft, ob die Bilddatei noch auf dem Gerät vorhanden ist.

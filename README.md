@@ -154,3 +154,9 @@ Die Tests in `test/receipt_test.dart` prüfen:
 ## Lizenz
 
 MIT © 2026 Nicolas Asauer
+
+---
+
+### 📜 Der Vibe-Check
+
+Diese App ist eine reine KI-Co-Produktion (Vibe Coding). OCR ist verdammt gut, aber nicht perfekt – prüfe Beträge immer kurz nach! Alles bleibt lokal auf deinem Handy (Local-First). Kein Steuerberater-Ersatz, aber dein bester Freund für die Übersicht. 🚀

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Konfiguration der FileProvider-Pfade für Kamerabilder -->
+<paths>
+    <external-files-path name="images" path="Pictures"/>
+    <cache-path name="cache" path="/"/>
+</paths>

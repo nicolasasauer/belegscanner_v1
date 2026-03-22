@@ -1,0 +1,41 @@
+// App-Level Build-Konfiguration
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // Flutter Gradle Plugin muss nach den Android/Kotlin Plugins stehen
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace "com.example.belegscanner_v1"
+    compileSdk flutter.compileSdkVersion
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    defaultConfig {
+        applicationId "com.example.belegscanner_v1"
+        // Mindest-SDK für ML Kit ist 21
+        minSdk 21
+        targetSdk flutter.targetSdkVersion
+        versionCode flutter.versionCode
+        versionName flutter.versionName
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source "../.."
+}

@@ -2,5 +2,5 @@
 <!-- Konfiguration der FileProvider-Pfade für Kamerabilder -->
 <paths>
     <external-files-path name="images" path="Pictures"/>
-    <cache-path name="cache" path="/"/>
+    <cache-path name="cache" path="scan_cache/"/>
 </paths>

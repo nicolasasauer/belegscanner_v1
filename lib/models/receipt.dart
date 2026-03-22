@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Datenmodell für einen gescannten Beleg.
 class Receipt {
   /// Eindeutige ID des Belegs (UUID).
@@ -37,6 +39,32 @@ class Receipt {
       totalAmount: totalAmount ?? this.totalAmount,
       items: items ?? this.items,
       imagePath: imagePath ?? this.imagePath,
+    );
+  }
+
+  /// Konvertiert den Beleg in eine Map für die SQLite-Datenbank.
+  ///
+  /// Die Artikel-Liste wird als JSON-String gespeichert.
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'date': date.toIso8601String(),
+      'totalAmount': totalAmount,
+      'items': jsonEncode(items),
+      'imagePath': imagePath,
+    };
+  }
+
+  /// Erstellt einen [Receipt] aus einer SQLite-Datenbankzeile.
+  factory Receipt.fromMap(Map<String, dynamic> map) {
+    final rawItems = map['items'] as String;
+    final decoded = jsonDecode(rawItems) as List<dynamic>;
+    return Receipt(
+      id: map['id'] as String,
+      date: DateTime.parse(map['date'] as String),
+      totalAmount: (map['totalAmount'] as num).toDouble(),
+      items: decoded.cast<String>(),
+      imagePath: map['imagePath'] as String,
     );
   }
 

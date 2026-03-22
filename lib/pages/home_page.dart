@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/receipt.dart';
+import '../services/database_service.dart';
 import '../services/ocr_service.dart';
 
 /// Hauptseite der Belegscanner-App.
@@ -42,6 +44,7 @@ class _HomePageState extends State<HomePage> {
   // ---------------------------------------------------------------------------
 
   final OcrService _ocrService = OcrService();
+  final DatabaseService _databaseService = DatabaseService();
 
   /// Formatter für Euro-Beträge (z. B. "12,50 €").
   final NumberFormat _currencyFormat = NumberFormat.currency(
@@ -51,6 +54,28 @@ class _HomePageState extends State<HomePage> {
 
   /// Formatter für das Anzeigedatum (z. B. "22. März 2026").
   final DateFormat _dateFormat = DateFormat('d. MMMM yyyy', 'de_DE');
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReceipts();
+  }
+
+  /// Lädt alle gespeicherten Belege aus der lokalen Datenbank.
+  Future<void> _loadReceipts() async {
+    final receipts = await _databaseService.getAllReceipts();
+    if (mounted) {
+      setState(() {
+        _receipts
+          ..clear()
+          ..addAll(receipts);
+      });
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Berechnete Eigenschaften
@@ -102,6 +127,7 @@ class _HomePageState extends State<HomePage> {
       final receipt = await _ocrService.scanReceipt();
 
       if (receipt != null && mounted) {
+        await _databaseService.insertReceipt(receipt);
         setState(() {
           _receipts.add(receipt);
         });
@@ -119,11 +145,14 @@ class _HomePageState extends State<HomePage> {
         }
       }
     } catch (e) {
-      // Fehler dem Benutzer anzeigen
+      // Freundliche Fehlermeldung ohne technische Details
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Scan fehlgeschlagen: $e'),
+            content: const Text(
+              'Hoppla, da ist beim Scannen etwas schiefgelaufen. '
+              'Bitte versuche es erneut.',
+            ),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -140,6 +169,28 @@ class _HomePageState extends State<HomePage> {
       _selectedMonth = null;
       _selectedYear = null;
     });
+  }
+
+  /// Löscht einen Beleg aus der Datenbank und entfernt ggf. die Bilddatei.
+  Future<void> _deleteReceipt(Receipt receipt) async {
+    await _databaseService.deleteReceipt(receipt.id);
+
+    // Bilddatei vom Speicher entfernen, falls vorhanden
+    final imageFile = File(receipt.imagePath);
+    if (imageFile.existsSync()) {
+      try {
+        await imageFile.delete();
+      } catch (_) {
+        // Datei konnte nicht gelöscht werden (z. B. fehlende Rechte) –
+        // DB-Eintrag wurde bereits entfernt, daher trotzdem fortfahren.
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _receipts.removeWhere((r) => r.id == receipt.id);
+      });
+    }
   }
 
   /// Zeigt die Detail-Ansicht eines Belegs in einem BottomSheet.
@@ -225,11 +276,53 @@ class _HomePageState extends State<HomePage> {
                             const SizedBox(height: 4),
                         itemBuilder: (context, index) {
                           final receipt = filtered[index];
-                          return _ReceiptListTile(
-                            receipt: receipt,
-                            dateFormat: _dateFormat,
-                            currencyFormat: _currencyFormat,
-                            onTap: () => _showReceiptDetails(receipt),
+                          return Dismissible(
+                            key: ValueKey(receipt.id),
+                            direction: DismissDirection.endToStart,
+                            background: Container(
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 24),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.errorContainer,
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              child: Icon(
+                                Icons.delete_outline,
+                                color: Theme.of(context).colorScheme.onErrorContainer,
+                              ),
+                            ),
+                            confirmDismiss: (_) async {
+                              return await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Beleg löschen?'),
+                                  content: const Text(
+                                    'Möchtest du diesen Beleg und das '
+                                    'zugehörige Bild wirklich löschen?',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(ctx, false),
+                                      child: const Text('Abbrechen'),
+                                    ),
+                                    FilledButton(
+                                      onPressed: () =>
+                                          Navigator.pop(ctx, true),
+                                      child: const Text('Löschen'),
+                                    ),
+                                  ],
+                                ),
+                              ) ??
+                                  false;
+                            },
+                            onDismissed: (_) => _deleteReceipt(receipt),
+                            child: _ReceiptListTile(
+                              receipt: receipt,
+                              dateFormat: _dateFormat,
+                              currencyFormat: _currencyFormat,
+                              onTap: () => _showReceiptDetails(receipt),
+                            ),
                           );
                         },
                       ),

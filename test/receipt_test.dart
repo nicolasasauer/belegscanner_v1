@@ -75,6 +75,78 @@ void main() {
       expect(str, contains('str-test'));
       expect(str, contains('7.49'));
     });
+
+    // -------------------------------------------------------------------------
+    // Tests für toMap / fromMap (Datenbankpersistenz)
+    // -------------------------------------------------------------------------
+
+    test('toMap enthält alle Felder in der richtigen Form', () {
+      final date = DateTime(2026, 3, 22, 10, 30);
+      final receipt = Receipt(
+        id: 'map-test',
+        date: date,
+        totalAmount: 14.95,
+        items: ['Brot 2,49', 'Milch 1,29'],
+        imagePath: '/tmp/scan.jpg',
+      );
+
+      final map = receipt.toMap();
+
+      expect(map['id'], equals('map-test'));
+      expect(map['date'], equals(date.toIso8601String()));
+      expect(map['totalAmount'], equals(14.95));
+      expect(map['items'], equals('["Brot 2,49","Milch 1,29"]'));
+      expect(map['imagePath'], equals('/tmp/scan.jpg'));
+    });
+
+    test('fromMap erstellt einen korrekten Receipt', () {
+      final map = {
+        'id': 'from-map-test',
+        'date': '2026-03-22T10:30:00.000',
+        'totalAmount': 9.99,
+        'items': '["Käse","Butter"]',
+        'imagePath': '/tmp/img.jpg',
+      };
+
+      final receipt = Receipt.fromMap(map);
+
+      expect(receipt.id, equals('from-map-test'));
+      expect(receipt.date, equals(DateTime(2026, 3, 22, 10, 30)));
+      expect(receipt.totalAmount, equals(9.99));
+      expect(receipt.items, equals(['Käse', 'Butter']));
+      expect(receipt.imagePath, equals('/tmp/img.jpg'));
+    });
+
+    test('toMap und fromMap sind inverse Operationen (Roundtrip)', () {
+      final original = Receipt(
+        id: 'roundtrip',
+        date: DateTime(2026, 5, 1, 12, 0),
+        totalAmount: 23.45,
+        items: ['Artikel A', 'Artikel B', 'Artikel C'],
+        imagePath: '/tmp/roundtrip.jpg',
+      );
+
+      final restored = Receipt.fromMap(original.toMap());
+
+      expect(restored.id, equals(original.id));
+      expect(restored.date, equals(original.date));
+      expect(restored.totalAmount, equals(original.totalAmount));
+      expect(restored.items, equals(original.items));
+      expect(restored.imagePath, equals(original.imagePath));
+    });
+
+    test('fromMap mit leerer Artikel-Liste', () {
+      final map = {
+        'id': 'empty-items',
+        'date': '2026-01-01T00:00:00.000',
+        'totalAmount': 0.0,
+        'items': '[]',
+        'imagePath': '/tmp/empty.jpg',
+      };
+
+      final receipt = Receipt.fromMap(map);
+      expect(receipt.items, isEmpty);
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -1,0 +1,34 @@
+name: belegscanner_v1
+description: Eine Flutter-App zum Einscannen, Speichern und Filtern von Belegen.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Kamera-Zugriff für den Scan
+  camera: ^0.10.5+9
+
+  # Google ML Kit für OCR-Texterkennung
+  google_mlkit_text_recognition: ^0.13.1
+
+  # Datum- und Währungsformatierung
+  intl: ^0.19.0
+
+  # Bildauswahl aus Galerie oder Kamera
+  image_picker: ^1.1.2
+
+  # UUID-Generierung für eindeutige IDs
+  uuid: ^4.4.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

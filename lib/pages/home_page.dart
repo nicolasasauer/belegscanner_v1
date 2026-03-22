@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -232,12 +234,27 @@ class _HomePageState extends State<HomePage> {
                         },
                       ),
 
-                // Scan-Overlay: CircularProgressIndicator in der Mitte
+                // Scan-Overlay: Glassmorphism-Effekt mit Unschärfe
                 if (_isScanning)
-                  Container(
-                    color: colorScheme.scrim.withOpacity(0.3),
-                    child: const Center(
-                      child: CircularProgressIndicator(),
+                  BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                    child: Container(
+                      color: colorScheme.scrim.withOpacity(0.15),
+                      alignment: Alignment.center,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Scan l\u00E4uft...',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(color: colorScheme.onSurface),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
               ],
@@ -288,7 +305,7 @@ class _HomePageState extends State<HomePage> {
 // Filter-Bar Widget
 // =============================================================================
 
-/// Filter-Leiste mit Dropdowns für Tag, Monat und Jahr.
+/// Filter-Leiste mit FilterChips für Tag, Monat und Jahr.
 class _FilterBar extends StatelessWidget {
   const _FilterBar({
     required this.availableDays,
@@ -314,46 +331,80 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      elevation: 1,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            // Tag-Filter
-            Expanded(
-              child: _FilterDropdown<int>(
-                label: 'Tag',
-                value: selectedDay,
-                items: availableDays,
-                itemLabel: (d) => d.toString().padLeft(2, '0'),
-                onChanged: onDayChanged,
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Monats-Filter
-            Expanded(
-              child: _FilterDropdown<int>(
-                label: 'Monat',
-                value: selectedMonth,
-                items: availableMonths,
-                itemLabel: (m) => _monthName(m),
-                onChanged: onMonthChanged,
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Jahres-Filter
-            Expanded(
-              child: _FilterDropdown<int>(
-                label: 'Jahr',
-                value: selectedYear,
-                items: availableYears,
-                itemLabel: (y) => y.toString(),
-                onChanged: onYearChanged,
-              ),
-            ),
-          ],
+    // Filter-Leiste ausblenden, wenn noch keine Belege vorhanden sind
+    if (availableDays.isEmpty &&
+        availableMonths.isEmpty &&
+        availableYears.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              // Tag-FilterChips
+              if (availableDays.isNotEmpty) ...[
+                _ChipGroupLabel(label: 'Tag'),
+                ...availableDays.map(
+                  (d) => _buildChip(
+                    context: context,
+                    label: d.toString().padLeft(2, '0'),
+                    isSelected: selectedDay == d,
+                    onSelected: (sel) => onDayChanged(sel ? d : null),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              // Monat-FilterChips
+              if (availableMonths.isNotEmpty) ...[
+                _ChipGroupLabel(label: 'Monat'),
+                ...availableMonths.map(
+                  (m) => _buildChip(
+                    context: context,
+                    label: _monthName(m),
+                    isSelected: selectedMonth == m,
+                    onSelected: (sel) => onMonthChanged(sel ? m : null),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              // Jahr-FilterChips
+              if (availableYears.isNotEmpty) ...[
+                _ChipGroupLabel(label: 'Jahr'),
+                ...availableYears.map(
+                  (y) => _buildChip(
+                    context: context,
+                    label: y.toString(),
+                    isSelected: selectedYear == y,
+                    onSelected: (sel) => onYearChanged(sel ? y : null),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+
+  Widget _buildChip({
+    required BuildContext context,
+    required String label,
+    required bool isSelected,
+    required ValueChanged<bool> onSelected,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: FilterChip(
+        label: Text(label),
+        selected: isSelected,
+        onSelected: onSelected,
+        visualDensity: VisualDensity.compact,
       ),
     );
   }
@@ -361,59 +412,30 @@ class _FilterBar extends StatelessWidget {
   /// Gibt den deutschen Monatsnamen für einen Monatswert (1–12) zurück.
   String _monthName(int month) {
     const names = [
-      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+      'Jan', 'Feb', 'M\u00E4r', 'Apr', 'Mai', 'Jun',
       'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
     ];
     return names[month - 1];
   }
 }
 
-/// Generisches Dropdown-Widget für die Filter-Leiste.
-class _FilterDropdown<T> extends StatelessWidget {
-  const _FilterDropdown({
-    required this.label,
-    required this.value,
-    required this.items,
-    required this.itemLabel,
-    required this.onChanged,
-  });
+/// Kleines Beschriftungs-Widget für eine Chip-Gruppe in der Filter-Leiste.
+class _ChipGroupLabel extends StatelessWidget {
+  const _ChipGroupLabel({required this.label});
 
   final String label;
-  final T? value;
-  final List<T> items;
-  final String Function(T) itemLabel;
-  final ValueChanged<T?> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButtonFormField<T>(
-      value: value,
-      isExpanded: true,
-      decoration: InputDecoration(
-        labelText: label,
-        isDense: true,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        border: const OutlineInputBorder(),
-      ),
-      items: [
-        DropdownMenuItem<T>(
-          value: null,
-          child: Text(
-            'Alle',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w600,
             ),
-          ),
-        ),
-        ...items.map(
-          (item) => DropdownMenuItem<T>(
-            value: item,
-            child: Text(itemLabel(item)),
-          ),
-        ),
-      ],
-      onChanged: onChanged,
+      ),
     );
   }
 }
@@ -439,7 +461,14 @@ class _ReceiptListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24.0),
+      ),
+      elevation: 0.5,
       child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24.0),
+        ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: CircleAvatar(
@@ -497,11 +526,12 @@ class _ReceiptDetailSheet extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Griff-Anzeige
+            // Drag-Handle
             Center(
               child: Container(
-                width: 40,
+                width: 48,
                 height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
                 decoration: BoxDecoration(
                   color:
                       Theme.of(context).colorScheme.outlineVariant,
@@ -509,7 +539,6 @@ class _ReceiptDetailSheet extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
 
             // Betrag und Datum
             Row(
@@ -539,12 +568,13 @@ class _ReceiptDetailSheet extends StatelessWidget {
             const SizedBox(height: 8),
 
             Expanded(
-              child: ListView.builder(
+              child: ListView.separated(
                 controller: scrollController,
                 itemCount: receipt.items.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (_, index) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text('• ${receipt.items[index]}'),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Text('\u2022 ${receipt.items[index]}'),
                 ),
               ),
             ),

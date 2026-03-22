@@ -49,8 +49,5 @@
 	<!-- Foto-Bibliothek Lese-Berechtigung -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Diese App benötigt Zugriff auf Ihre Fotos, um Belege aus der Galerie zu importieren.</string>
-	<!-- Foto-Bibliothek Schreib-Berechtigung -->
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Diese App speichert gescannte Belegbilder in Ihrer Fotobibliothek.</string>
 </dict>
 </plist>

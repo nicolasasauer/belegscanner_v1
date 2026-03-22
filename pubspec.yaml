@@ -10,9 +10,6 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Kamera-Zugriff für den Scan
-  camera: ^0.10.5+9
-
   # Google ML Kit für OCR-Texterkennung
   google_mlkit_text_recognition: ^0.13.1
 

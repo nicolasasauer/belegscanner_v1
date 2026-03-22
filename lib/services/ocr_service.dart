@@ -47,26 +47,52 @@ double _parseAmountImpl(String text) {
 }
 
 /// Zerlegt den OCR-Text in Einzelzeilen, bereinigt OCR-Artefakte und
-/// filtert Header-Daten, zu kurze Zeilen sowie Junk-Text heraus.
+/// filtert Header-Daten, Zahlungszeilen, Summenzeilen sowie Junk-Text heraus.
 ///
 /// Angewendete Filter-Schritte:
-///   1. Header- und Meta-Daten (Firmenform, Adresse, Telefon, Datum, Uhrzeit)
-///      werden per Regex-Ausschlussliste entfernt.
+///   1. Header-, Meta-, Zahlungs- und Summenzeilen werden per Regex-
+///      Ausschlussliste entfernt (z. B. GmbH, PLZ, Telefon, Summe, MwSt,
+///      EUR, Zahlung, Visa, Werbe-Slogans).
 ///   2. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio", "dnBio")
 ///      werden gestripped, sodass der Artikelname erhalten bleibt.
 ///   3. Zeilen mit weniger als 4 Buchstaben werden gefiltert.
 ///   4. Zeilen mit mehr als 50 % Ziffern und Sonderzeichen werden gefiltert.
 List<String> _parseItemsImpl(String text) {
-  // 1. Ausschlussmuster für typische Bon-Header und Meta-Daten
+  // 1. Ausschlussmuster für typische Bon-Header, Meta-Daten, Summen- und
+  //    Zahlungszeilen sowie Werbe-Slogans.
   final RegExp headerPattern = RegExp(
+    // Rechtsformen / Firmenbezeichnungen
     r'GmbH|OHG|e\.K\.|'
     r'(?:^|\s)(?:AG|KG|eG)(?:\s|$)|e\.V\.|'
+    // Adresse / Postleitzahl
     r'\b\d{5}\b|Str\.|Stra[ßs]e|'
-    r'Tel\.?:?\s*[\d\s\-/()]{5,}|Telefon|'
+    // Telefon / Fax / Internet
+    r'Tel\.?:?\s*[\d\s\-/()]{5,}|Telefon|Fax|'
+    r'www\.\S+|https?://|'
+    // Steuer-IDs
     r'USt.{0,5}IdNr|Steuernummer|'
+    // Datum / Uhrzeit
     r'\d{1,2}\.\d{1,2}\.\d{2,4}|'
     r'\d{1,2}:\d{2}\s*Uhr|'
-    r'www\.\S+|https?://',
+    // Summen- und Gesamtbetragszeilen
+    r'\bSumme\b|\bGesamtbetrag\b|\bZwischensumme\b|\bEndbetrag\b|'
+    r'\bZahlbetrag\b|\bRestbetrag\b|\bZu zahlen\b|'
+    // Steuer-Kennzeichen / MwSt-Zeilen
+    r'\bMwSt\b|\bMWSt\b|\bUmSt\b|\bMehrwertsteuer\b|\bSteuer\b|'
+    r'\bNetto\b|\bBrutto\b|'
+    // Währungs-Zeilen (z. B. "EUR 14,95")
+    r'\bEUR\b|'
+    // Zahlungsmittel
+    r'\bZahlung\b|\bBargeld\b|\bBar\b|\bGegeben\b|'
+    r'\bRückgeld\b|\bWechselgeld\b|'
+    r'\bVisa\b|\bMastercard\b|\bMaestro\b|\bEC-Karte\b|\bKartenzahlung\b|'
+    // Kasseninformationen
+    r'\bKassennummer\b|\bBonnummer\b|\bKassenbon\b|\bBon-Nr\b|\bKassen-ID\b|'
+    // Grußformeln / Werbe-Slogans
+    r'Hier bin ich Mensch|'
+    r'\bVielen Dank\b|\bAuf Wiedersehen\b|'
+    r'\bGuten\s+(?:Morgen|Tag|Abend)\b|'
+    r'\bWillkommen\b',
     caseSensitive: false,
   );
 

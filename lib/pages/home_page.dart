@@ -385,10 +385,25 @@ class _HomePageState extends State<HomePage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (_) => _ReceiptDetailSheet(
-        receipt: receipt,
-        dateFormat: _dateFormat,
-        currencyFormat: _currencyFormat,
+      builder: (ctx) => Padding(
+        // Keyboard-Padding: schiebt den Sheet-Inhalt nach oben, sobald die
+        // Tastatur eingeblendet wird.
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(ctx).bottom,
+        ),
+        child: _ReceiptDetailSheet(
+          receipt: receipt,
+          dateFormat: _dateFormat,
+          currencyFormat: _currencyFormat,
+          databaseService: _databaseService,
+          onSaved: (updatedReceipt) {
+            setState(() {
+              final idx =
+                  _receipts.indexWhere((r) => r.id == updatedReceipt.id);
+              if (idx != -1) _receipts[idx] = updatedReceipt;
+            });
+          },
+        ),
       ),
     );
   }
@@ -919,20 +934,27 @@ class _ReceiptListTile extends StatelessWidget {
   /// Baut das Thumbnail-Widget links im ListTile.
   ///
   /// Zeigt das echte Belegbild (falls vorhanden) oder einen Platzhalter.
-  /// Das Laden wird asynchron durch [Image.file] erledigt; bei fehlendem
-  /// oder korruptem Bild greift der [errorBuilder] auf den Platzhalter zurück.
+  /// Ein Tipp auf das Thumbnail öffnet die Vollbild-Ansicht mit Zoom.
   Widget _buildThumbnail(BuildContext context) {
     final path = receipt.imagePath;
 
     if (path != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.file(
-          File(path),
-          width: 52,
-          height: 52,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(context),
+      return GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => _FullscreenImageViewer(imagePath: path),
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.file(
+            File(path),
+            width: 52,
+            height: 52,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _placeholder(context),
+          ),
         ),
       );
     }
@@ -982,17 +1004,115 @@ final _lineItemPriceRegex = RegExp(r'\s+(\d{1,4}[.,]\d{2})\s*[A-Za-z]?\s*$');
 // Beleg-Detail BottomSheet Widget
 // =============================================================================
 
-/// Detail-Ansicht eines Belegs als BottomSheet.
-class _ReceiptDetailSheet extends StatelessWidget {
+/// Detail-Ansicht eines Belegs als BottomSheet mit editierbaren Positionen.
+class _ReceiptDetailSheet extends StatefulWidget {
   const _ReceiptDetailSheet({
     required this.receipt,
     required this.dateFormat,
     required this.currencyFormat,
+    required this.databaseService,
+    required this.onSaved,
   });
 
   final Receipt receipt;
   final DateFormat dateFormat;
   final NumberFormat currencyFormat;
+  final DatabaseService databaseService;
+  final ValueChanged<Receipt> onSaved;
+
+  @override
+  State<_ReceiptDetailSheet> createState() => _ReceiptDetailSheetState();
+}
+
+class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
+  late List<TextEditingController> _nameControllers;
+  late List<TextEditingController> _priceControllers;
+  bool _isSaving = false;
+
+  /// Formatiert Preise im deutschen Dezimalformat (z. B. "1,95") für die
+  /// Eingabefelder – getrennt vom [widget.currencyFormat], das das €-Symbol
+  /// enthält und für die Anzeige genutzt wird.
+  final NumberFormat _deDecimalFormat = NumberFormat('#0.00', 'de_DE');
+
+  @override
+  void initState() {
+    super.initState();
+    _initControllers(widget.receipt.items);
+  }
+
+  /// Initialisiert je einen Name- und Preis-Controller pro Artikel.
+  void _initControllers(List<String> items) {
+    _nameControllers = [];
+    _priceControllers = [];
+    for (final item in items) {
+      final (:name, :price) = _parseLineItem(item);
+      _nameControllers.add(TextEditingController(text: name));
+      _priceControllers.add(
+        TextEditingController(
+          text: price != null ? _deDecimalFormat.format(price) : '',
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _nameControllers) c.dispose();
+    for (final c in _priceControllers) c.dispose();
+    super.dispose();
+  }
+
+  /// Entfernt einen Artikel anhand seines Index aus der Liste.
+  void _deleteItem(int index) {
+    _nameControllers[index].dispose();
+    _priceControllers[index].dispose();
+    setState(() {
+      _nameControllers.removeAt(index);
+      _priceControllers.removeAt(index);
+    });
+  }
+
+  /// Speichert die geänderten Positionen in der Datenbank.
+  ///
+  /// Jeder Artikel wird als "<Name>  <Preis>" gespeichert – das doppelte
+  /// Leerzeichen dient als Trenner, da [_parseLineItem] `\s+` vor dem Preis
+  /// am Zeilenende erkennt und die Rekonstruktion damit zuverlässig gelingt.
+  Future<void> _saveChanges() async {
+    setState(() => _isSaving = true);
+    try {
+      final newItems = <String>[];
+      for (var i = 0; i < _nameControllers.length; i++) {
+        final name = _nameControllers[i].text.trim();
+        if (name.isEmpty) continue;
+        final priceText = _priceControllers[i].text.trim();
+        newItems.add(priceText.isNotEmpty ? '$name  $priceText' : name);
+      }
+
+      final updatedReceipt = widget.receipt.copyWith(items: newItems);
+      await widget.databaseService.insertReceipt(updatedReceipt);
+
+      if (mounted) {
+        widget.onSaved(updatedReceipt);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Änderungen gespeichert.')),
+        );
+      }
+    } catch (e, st) {
+      debugPrint('[_ReceiptDetailSheet] Save failed: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Speichern fehlgeschlagen. Bitte erneut versuchen.',
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1001,94 +1121,248 @@ class _ReceiptDetailSheet extends StatelessWidget {
       maxChildSize: 0.95,
       minChildSize: 0.4,
       expand: false,
-      builder: (_, scrollController) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+      builder: (_, scrollController) {
+        final hasImage = widget.receipt.imagePath != null;
+
+        return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Drag-Handle
-            Center(
-              child: Container(
-                width: 48,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 20),
-                decoration: BoxDecoration(
-                  color:
-                      Theme.of(context).colorScheme.outlineVariant,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+            // ------------------------------------------------------------------
+            // Fixer Kopfbereich (nicht gescrollt)
+            // ------------------------------------------------------------------
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Drag-Handle
+                  Center(
+                    child: Container(
+                      width: 48,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 20),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+
+                  // Betrag und Datum
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        widget.currencyFormat.format(
+                          widget.receipt.totalAmount,
+                        ),
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        widget.dateFormat.format(widget.receipt.date),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ],
+                  ),
+
+                  const Divider(height: 24),
+
+                  // Belegbild (antippen → Vollbild)
+                  if (hasImage) ...[
+                    _buildImagePreview(context),
+                    const Divider(height: 24),
+                  ],
+
+                  // Abschnittstitel
+                  Text(
+                    'Erkannte Positionen',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 8),
+                ],
               ),
             ),
 
-            // Betrag und Datum
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  currencyFormat.format(receipt.totalAmount),
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineMedium
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  dateFormat.format(receipt.date),
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ],
-            ),
-
-            const Divider(height: 24),
-
-            // Artikel-Liste
-            Text(
-              'Erkannte Positionen',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-
+            // ------------------------------------------------------------------
+            // Scrollbare Artikel-Liste
+            // ------------------------------------------------------------------
             Expanded(
-              child: receipt.items.isEmpty
+              child: _nameControllers.isEmpty
                   ? Center(
-                      child: Text(
-                        'Keine Positionen erkannt.',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Keine Positionen erkannt.',
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium?.copyWith(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
                       ),
                     )
                   : ListView.separated(
                       controller: scrollController,
-                      itemCount: receipt.items.length,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: _nameControllers.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, index) {
-                        final (:name, :price) =
-                            _parseLineItem(receipt.items[index]);
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(child: Text('\u2022 $name')),
-                              if (price != null) ...[
-                                const SizedBox(width: 8),
-                                Text(
-                                  currencyFormat.format(price),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
-                                      ?.copyWith(fontWeight: FontWeight.w500),
-                                ),
-                              ],
-                            ],
-                          ),
-                        );
-                      },
+                      itemBuilder: (_, index) => _buildItemRow(context, index),
                     ),
             ),
+
+            // ------------------------------------------------------------------
+            // Speichern-Button (immer sichtbar)
+            // ------------------------------------------------------------------
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _isSaving ? null : _saveChanges,
+                  icon: _isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: const Text('Speichern'),
+                ),
+              ),
+            ),
           ],
+        );
+      },
+    );
+  }
+
+  /// Belegbild-Vorschau: Tipp öffnet die Vollbild-Ansicht.
+  Widget _buildImagePreview(BuildContext context) {
+    final path = widget.receipt.imagePath!;
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => _FullscreenImageViewer(imagePath: path),
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          alignment: Alignment.bottomRight,
+          children: [
+            Image.file(
+              File(path),
+              height: 160,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
+            // Kleines Zoom-Hinweis-Icon
+            Container(
+              margin: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.zoom_in_outlined,
+                color: Colors.white,
+                size: 18,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Editierbare Zeile für einen Artikel (Name + Preis + Löschen-Button).
+  Widget _buildItemRow(BuildContext context, int index) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Artikelname
+          Expanded(
+            flex: 3,
+            child: TextField(
+              controller: _nameControllers[index],
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Artikel',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Preis
+          SizedBox(
+            width: 90,
+            child: TextField(
+              controller: _priceControllers[index],
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Preis',
+                isDense: true,
+                border: OutlineInputBorder(),
+                suffixText: '€',
+              ),
+            ),
+          ),
+          // Löschen-Button
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Position entfernen',
+            color: Theme.of(context).colorScheme.error,
+            onPressed: () => _deleteItem(index),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Vollbild-Bildanzeige mit Zoom
+// =============================================================================
+
+/// Vollbild-Ansicht eines Belegbilds mit Pinch-to-Zoom via [InteractiveViewer].
+class _FullscreenImageViewer extends StatelessWidget {
+  const _FullscreenImageViewer({required this.imagePath});
+
+  final String imagePath;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('Belegbild'),
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 6.0,
+          child: Image.file(
+            File(imagePath),
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.broken_image_outlined,
+                  color: Colors.white54, size: 64),
+            ),
+          ),
         ),
       ),
     );

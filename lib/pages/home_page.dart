@@ -499,6 +499,27 @@ class _ReceiptListTile extends StatelessWidget {
 }
 
 // =============================================================================
+// Hilfsfunktionen für Einzelposten-Preiserkennung
+// =============================================================================
+
+/// Compiled Regex: Preis am Ende einer OCR-Einzelposten-Zeile.
+///
+/// Erkennt z. B. "BROT 750G  2,99" oder "MILCH 1L 1,49 A".
+final _lineItemPriceRegex = RegExp(r'\s+(\d{1,4}[.,]\d{2})\s*[A-Za-z]?\s*$');
+
+/// Parst eine OCR-Zeile in einen Artikelnamen und einen optionalen Preis.
+///
+/// Gibt einen Named-Record `(name, price)` zurück. Wenn kein Preis erkannt
+/// wird, enthält [name] die ursprüngliche [line] und [price] ist `null`.
+({String name, double? price}) _parseLineItem(String line) {
+  final match = _lineItemPriceRegex.firstMatch(line);
+  if (match == null) return (name: line, price: null);
+  final price = double.tryParse(match.group(1)!.replaceAll(',', '.'));
+  final name = line.substring(0, match.start).trim();
+  return (name: name, price: price);
+}
+
+// =============================================================================
 // Beleg-Detail BottomSheet Widget
 // =============================================================================
 
@@ -572,10 +593,29 @@ class _ReceiptDetailSheet extends StatelessWidget {
                 controller: scrollController,
                 itemCount: receipt.items.length,
                 separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, index) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: Text('\u2022 ${receipt.items[index]}'),
-                ),
+                itemBuilder: (_, index) {
+                  final (:name, :price) =
+                      _parseLineItem(receipt.items[index]);
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: Text('\u2022 $name')),
+                        if (price != null) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            currencyFormat.format(price),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                },
               ),
             ),
           ],

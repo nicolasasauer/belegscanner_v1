@@ -9,7 +9,7 @@ Eine Flutter-App für Android und iOS zum **Einscannen**, **Speichern** und **Fi
 | Leere Startseite | Beleg-Liste | Scan läuft | Beleg-Detail |
 |:---:|:---:|:---:|:---:|
 | ![Leere Startseite](screenshots/screenshot_01_empty.png) | ![Beleg-Liste](screenshots/screenshot_02_list.png) | ![Scan läuft](screenshots/screenshot_03_scanning.png) | ![Beleg-Detail](screenshots/screenshot_04_detail.png) |
-| Startbildschirm ohne Belege | Gefilterte Beleg-Liste | LinearProgress- und CircularProgressIndicator während des Scans | Detail-BottomSheet mit erkannten Positionen |
+| Startbildschirm ohne Belege | Gefilterte Beleg-Liste | LinearProgress- und CircularProgressIndicator während des Scans | Detail-BottomSheet mit erkannten Positionen und Einzelpreisen |
 
 ---
 
@@ -18,7 +18,7 @@ Eine Flutter-App für Android und iOS zum **Einscannen**, **Speichern** und **Fi
 - 📷 **OCR-Scan** – Belege per Kamera fotografieren; Text wird automatisch mit Google ML Kit erkannt
 - 💶 **Betrag-Erkennung** – Regex-basiertes Parsing nach `Total`, `Summe`, `Gesamt` und `€`
 - 🗂️ **Filter** – Belege nach Tag, Monat und Jahr filtern
-- 📋 **Detail-Ansicht** – Alle erkannten Zeilen als Artikel-Liste im BottomSheet
+- 📋 **Detail-Ansicht** – Alle erkannten Zeilen als Artikel-Liste im BottomSheet, inklusive automatisch erkannter Einzelpreise
 - 🌙 **Material 3** – Light- und Dark-Theme, dynamische Farben (Indigo-Seed)
 - 🌍 **Deutsches Locale** – Euro-Formatierung (`42,50 €`) und deutsche Monatsnamen
 

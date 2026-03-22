@@ -1,5 +1,13 @@
 // App-Level Build-Konfiguration
 
+// plugins {} muss als erstes stehen (Gradle DSL-Anforderung)
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // Flutter Gradle Plugin muss nach den Android/Kotlin Plugins stehen
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
 // Read version info written by the Flutter CLI into local.properties
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
@@ -19,17 +27,10 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    // Flutter Gradle Plugin muss nach den Android/Kotlin Plugins stehen
-    id "dev.flutter.flutter-gradle-plugin"
-}
-
 android {
     namespace "com.example.belegscanner_v1"
     compileSdk flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    ndkVersion "25.1.8937393"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -52,6 +53,9 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.debug
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

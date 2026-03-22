@@ -20,7 +20,7 @@ import '../models/receipt.dart';
 double _parseAmountImpl(String text) {
   // Erweiterte Schlüsselwörter für deutsche Belege
   final RegExp amountRegex = RegExp(
-    r'(?:gesamtbetrag|zahlbetrag|total|summe|gesamt|betrag|amount|bar|€|eur)\D*'
+    r'(?:gesamtbetrag|zahlbetrag|total|summe|gesamt|betrag|amount|\bbar\b|€|eur)\D*'
     r'(\d{1,6}[.,]\d{2})',
     caseSensitive: false,
   );

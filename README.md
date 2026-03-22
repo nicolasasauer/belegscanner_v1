@@ -6,10 +6,10 @@ Eine Flutter-App für Android zum **Einscannen**, **Speichern**, **Durchsuchen**
 
 ## Screenshots
 
-| Leere Startseite | Beleg-Liste |
-|:---:|:---:|
-| ![Leere Startseite](https://github.com/user-attachments/assets/16902a92-0bb3-4263-9ec2-9509956fc4aa) | ![Beleg-Liste](https://github.com/user-attachments/assets/6d3c4bc8-3570-4b74-b7de-98005410f16d) |
-| Startbildschirm ohne Belege | Gefilterte Beleg-Liste mit Datum-FilterChips |
+| Leere Startseite | Beleg-Liste | Beleg-Detail |
+|:---:|:---:|:---:|
+| ![Leere Startseite](https://github.com/user-attachments/assets/16902a92-0bb3-4263-9ec2-9509956fc4aa) | ![Beleg-Liste](https://github.com/user-attachments/assets/6d3c4bc8-3570-4b74-b7de-98005410f16d) | ![Beleg-Detail](https://github.com/user-attachments/assets/355493cb-3996-48d5-a021-cb206d5d00a4) |
+| Startbildschirm ohne Belege | Gefilterte Beleg-Liste mit Datum-FilterChips | Detail-BottomSheet mit erkannten Positionen und Einzelpreisen |
 
 ---
 

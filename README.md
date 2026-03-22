@@ -30,26 +30,40 @@ Eine Flutter-App für Android und iOS zum **Einscannen**, **Speichern** und **Fi
 
 ```
 lib/
-├── main.dart                  # App-Einstiegspunkt, Material-3-Theme
+├── main.dart                      # App-Einstiegspunkt, Material-3-Theme
 ├── models/
-│   └── receipt.dart           # Receipt-Datenmodell (id, date, totalAmount, items, imagePath)
+│   └── receipt.dart               # Receipt-Datenmodell (id, date, totalAmount, items, imagePath)
 ├── services/
-│   └── ocr_service.dart       # OCR-Logik: Kamera → ML Kit → Parsing
+│   ├── ocr_service.dart           # OCR-Logik: Kamera → ML Kit → Parsing (Background-Isolate)
+│   └── database_service.dart      # SQLite-Persistenz: CRUD-Operationen für Belege
 └── pages/
-    └── home_page.dart         # StatefulWidget: Filter-Bar, ListView, Scan-Overlay, FAB
+    └── home_page.dart             # StatefulWidget: Filter-Bar, ListView, Scan-Overlay, FAB, CSV-Export
 ```
 
 ### Datenfluss
 
 ```
+App-Start
+    └─► _loadReceipts()
+            └─► DatabaseService.getAllReceipts()  ──► SQLite (sqflite)
+                    └─► Receipt-Liste → setState → ListView
+
 FAB drücken
     └─► _startScan()  [async]
             └─► OcrService.scanReceipt()
                     ├─► ImagePicker (Kamera)
-                    ├─► GoogleMlKit TextRecognizer
-                    ├─► _parseAmount()  (Regex)
-                    └─► _parseItems()  (Zeilenweise)
-                            └─► Receipt-Objekt → setState → ListView
+                    ├─► GoogleMlKit TextRecognizer  (Haupt-Isolate)
+                    ├─► compute(_parseOcrText)      (Background-Isolate)
+                    │       ├─► _parseAmount()  (Regex, Schlüsselwörter + Fallback)
+                    │       └─► _parseItems()   (Zeilenweise)
+                    └─► Receipt-Objekt
+                            └─► DatabaseService.insertReceipt()  ──► SQLite
+                                    └─► setState → ListView
+
+Wisch-zum-Löschen
+    └─► _deleteReceipt()
+            ├─► DatabaseService.deleteReceipt(id)  ──► SQLite
+            └─► File(imagePath).delete()
 ```
 
 ---
@@ -133,7 +147,9 @@ belegscanner_v1/
 ├── lib/                       # Dart-Quellcode
 │   ├── main.dart
 │   ├── models/receipt.dart
-│   ├── services/ocr_service.dart
+│   ├── services/
+│   │   ├── ocr_service.dart
+│   │   └── database_service.dart
 │   └── pages/home_page.dart
 ├── test/
 │   └── receipt_test.dart      # Unit-Tests für Modell und Filter-Logik

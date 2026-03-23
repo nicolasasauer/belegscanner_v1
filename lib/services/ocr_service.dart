@@ -13,13 +13,41 @@ import '../models/receipt.dart';
 // Top-level Parsing-Funktionen (erforderlich für compute-Isolate)
 // ---------------------------------------------------------------------------
 
+/// Compiled Regex: Preis am Ende einer OCR-Einzelposten-Zeile.
+///
+/// Erkennt z. B. "BROT 750G  2,99", "MILCH 1L 1,49 A" oder
+/// "dmBio Tofu Rosso 200g 1,65 2" (Tax-Code am Ende ist Buchstabe oder Ziffer).
+/// Das führende `\s+` stellt sicher, dass der Preis durch mindestens ein
+/// Leerzeichen vom Artikelnamen getrennt ist.
+final RegExp lineItemPriceRegex =
+    RegExp(r'\s+(\d{1,4}[.,]\d{2})\s*[A-Za-z0-9]?\s*$');
+
+/// Parst eine OCR-Zeile in einen Artikelnamen und einen optionalen Preis.
+///
+/// Gibt einen Named-Record `(name, price)` zurück. Wenn kein Preis erkannt
+/// wird, enthält [name] die ursprüngliche [line] und [price] ist `null`.
+///
+/// Beispiele:
+/// - "dmBio Tofu Rosso 200g 1,65 2" → name: "dmBio Tofu Rosso 200g", price: 1.65
+/// - "Brot 750g  2,49" → name: "Brot 750g", price: 2.49
+/// - "1,65" → name: "1,65", price: null
+@visibleForTesting
+({String name, double? price}) parseLineItem(String line) {
+  final match = lineItemPriceRegex.firstMatch(line);
+  if (match == null) return (name: line, price: null);
+  final price = double.tryParse(match.group(1)!.replaceAll(',', '.'));
+  final name = line.substring(0, match.start).trim();
+  return (name: name, price: price);
+}
+
 /// Extrahiert den Gesamtbetrag aus dem OCR-Text.
 ///
 /// Sucht nach deutschen Schlüsselwörtern wie "Summe", "Gesamtbetrag",
 /// "Zahlbetrag", "Total", "Bar" sowie dem Euro-Zeichen und parst den
 /// zugehörigen Betrag. Unterstützt Punkt und Komma als Dezimaltrenner
 /// (z. B. 14,95 und 14.95).
-double _parseAmountImpl(String text) {
+@visibleForTesting
+double parseAmountImpl(String text) {
   // Erweiterte Schlüsselwörter für deutsche Belege
   final RegExp amountRegex = RegExp(
     r'(?:gesamtbetrag|zahlbetrag|total|summe|gesamt|betrag|amount|\bbar\b|€|eur)\D*'
@@ -57,11 +85,16 @@ double _parseAmountImpl(String text) {
 ///      werden gestripped, sodass der Artikelname erhalten bleibt.
 ///   3. Paare aus [NAME] und [PREIS] werden erkannt:
 ///      - Zeilen mit Text + Preis am Ende → direkt als Artikel übernommen.
-///      - Reine Preis-Zeilen nach einer Text-Zeile → zusammengeführt
-///        (OCR-Toleranz: OCR schiebt Preis manchmal in die nächste Zeile).
+///      - Reine Text-Zeilen gefolgt von einer reinen Preis-Zeile →
+///        zusammengeführt (OCR-Toleranz: OCR schiebt Preis manchmal in die
+///        nächste Zeile).
 ///      - Standalone-Preis-Zeilen und reine Zahlen (z. B. MwSt-Sätze)
 ///        werden ignoriert.
-List<String> _parseItemsImpl(String text) {
+///
+/// Jeder erkannte Treffer wird per [debugPrint] mit
+/// `[OCR-Match] Found: Name=… Price=…` protokolliert.
+@visibleForTesting
+List<String> parseItemsImpl(String text) {
   // 1. Ausschlussmuster für typische Bon-Header, Meta-Daten, Summen- und
   //    Zahlungszeilen sowie Werbe-Slogans.
   final RegExp headerPattern = RegExp(
@@ -106,7 +139,7 @@ List<String> _parseItemsImpl(String text) {
   final RegExp junkPrefixPattern = RegExp(r'^[A-Za-z]nBio\s+');
 
   // 3a. Preis-Only-Muster: die ganze Zeile ist nur ein Preis
-  //     (z. B. "1,65", "2.99", "14,95 A")
+  //     (z. B. "1,65", "2.99", "14,95 A", "1,65 2")
   final RegExp priceOnlyPattern = RegExp(
     r'^\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
   );
@@ -144,6 +177,8 @@ List<String> _parseItemsImpl(String text) {
     // Vollständiger Artikel: Name + Preis auf derselben Zeile
     if (itemWithPricePattern.hasMatch(line)) {
       result.add(line);
+      final (:name, :price) = parseLineItem(line);
+      debugPrint('[OCR-Match] Found: Name=$name, Price=${price ?? "–"}');
       i++;
       continue;
     }
@@ -153,12 +188,14 @@ List<String> _parseItemsImpl(String text) {
     // Bedingung: die aktuelle Zeile muss mindestens einen Buchstaben enthalten,
     // damit reine Zahlenzeilen (z. B. MwSt-Prozentsätze) nicht als Namen
     // behandelt werden.
-    final bool nameHasLetter =
-        RegExp(r'[A-Za-zÄÖÜäöüß]').hasMatch(line);
+    final bool nameHasLetter = RegExp(r'[A-Za-zÄÖÜäöüß]').hasMatch(line);
     if (nameHasLetter &&
         i + 1 < lines.length &&
         priceOnlyPattern.hasMatch(lines[i + 1])) {
-      result.add('$line  ${lines[i + 1].trim()}');
+      final merged = '$line  ${lines[i + 1].trim()}';
+      result.add(merged);
+      final (:name, :price) = parseLineItem(merged);
+      debugPrint('[OCR-Match] Found: Name=$name, Price=${price ?? "–"}');
       i += 2;
       continue;
     }
@@ -174,8 +211,8 @@ List<String> _parseItemsImpl(String text) {
 /// Artikel-Liste zurück.
 Map<String, dynamic> _parseOcrText(String text) {
   return {
-    'amount': _parseAmountImpl(text),
-    'items': _parseItemsImpl(text),
+    'amount': parseAmountImpl(text),
+    'items': parseItemsImpl(text),
   };
 }
 

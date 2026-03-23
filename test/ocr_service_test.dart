@@ -586,4 +586,117 @@ void main() {
       expect(parseAmountImpl(redBullReceiptText), closeTo(9.30, 0.001));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Tests für parseItemsHeuristic / parseItemsImpl – scrambled dm-Beleg
+  // ("Endgegner"-Text: Namen und Preise vollständig getrennt)
+  // ---------------------------------------------------------------------------
+
+  group('parseItemsHeuristic – scrambled dm-Beleg', () {
+    // Simulierter OCR-Output, bei dem die Artikel-Namen und -Preise
+    // komplett in verschiedenen Textbereichen erscheinen.
+    // SUMME taucht auf Zeile 2 auf → primäre Logik findet 0 Artikel →
+    // Heuristik-Queue-Logik greift als Fallback.
+    // Erwartetes Ergebnis: 2 Artikel (Fruchtaufstrich 2,25 €, Tofu 1,65 €)
+    // und Gesamtsumme 3,90 €.
+    const scrambledDmText =
+        '21.03.2026 13:45 O503/1 125317/1 3889\n'
+        'SUMME\n'
+        'dmBio Fruchtaufstr.Erdb.250g\n'
+        'dm drogerie markt GmbH\n'
+        'Marktgraben 27\n'
+        'dmBio Tofu ROsso 200g\n'
+        'Visa Credit EUR\n'
+        'Buchung\n'
+        '6020 Innsbruck\n'
+        '21.03.2026\n'
+        '0512-587041\n'
+        'MWSt-Satz\n'
+        'Total-EFT EUR:\n'
+        '2=10,00%\n'
+        'XXX9471\n'
+        '1/1/1227** ************ * **** *******00256601\n'
+        'Summe Nettobetr\n'
+        '3,90\n'
+        '#31514283*00256601/695688/00999100200#\n'
+        'visa Debit Contactless\n'
+        '3,55\n'
+        'Für diesen Einkauf hätten sie\n'
+        '3 PAYBACK Punkte erhalten\n'
+        'öffnungszeiten auf dm. at\n'
+        'Hier bin ich Mensch\n'
+        'EUR\n'
+        'Hier kauf ich ein\n'
+        '2,25\n'
+        'Danke für Ihren Einkauf\n'
+        'ATU 35195908\n'
+        '1,65\n'
+        '3,90\n'
+        '-3,90\n'
+        '13:46:00\n'
+        '3.90\n'
+        'EFSTA. NET#376320361139479120207678\n'
+        '2\n'
+        '2\n'
+        'MWSt\n'
+        '0,35\n'
+        '21.03. 2026 13:45 0503/1 125317/1 3889';
+
+    test('parseItemsImpl erkennt genau zwei Artikel (via Heuristik-Fallback)',
+        () {
+      final items = parseItemsImpl(scrambledDmText);
+      expect(items.length, equals(2));
+    });
+
+    test('Erster Artikel: Name = "dmBio Fruchtaufstr.Erdb.250g", Preis = 2.25',
+        () {
+      final items = parseItemsImpl(scrambledDmText);
+      final (:name, :price) = parseLineItem(items[0]);
+      expect(name, equals('dmBio Fruchtaufstr.Erdb.250g'));
+      expect(price, closeTo(2.25, 0.001));
+    });
+
+    test('Zweiter Artikel: Name = "dmBio Tofu ROsso 200g", Preis = 1.65', () {
+      final items = parseItemsImpl(scrambledDmText);
+      final (:name, :price) = parseLineItem(items[1]);
+      expect(name, equals('dmBio Tofu ROsso 200g'));
+      expect(price, closeTo(1.65, 0.001));
+    });
+
+    test('Gesamtbetrag = 3,90 (aus "Summe Nettobetr\\n3,90")', () {
+      expect(parseAmountImpl(scrambledDmText), closeTo(3.90, 0.001));
+    });
+
+    test('MwSt-Betrag 0,35 erscheint nicht als Artikelpreis', () {
+      final items = parseItemsImpl(scrambledDmText);
+      for (final item in items) {
+        final (:name, :price) = parseLineItem(item);
+        expect(price, isNot(closeTo(0.35, 0.001)),
+            reason: 'MwSt-Betrag 0,35 darf kein Artikelpreis sein');
+      }
+    });
+
+    test('Junk-Zeilen (GmbH, Visa, ATU, Payback, Danke) erscheinen nicht in der Artikelliste',
+        () {
+      final items = parseItemsImpl(scrambledDmText);
+      for (final item in items) {
+        expect(item.toLowerCase(), isNot(contains('gmbh')));
+        expect(item.toLowerCase(), isNot(contains('visa')));
+        expect(item.toLowerCase(), isNot(contains('atu')));
+        expect(item.toLowerCase(), isNot(contains('payback')));
+        expect(item.toLowerCase(), isNot(contains('danke')));
+        expect(item.toLowerCase(), isNot(contains('summe')));
+        expect(item.toLowerCase(), isNot(contains('contactless')));
+        expect(item.toLowerCase(), isNot(contains('efsta')));
+      }
+    });
+
+    test('parseItemsHeuristic direkt: liefert dieselben 2 Artikel', () {
+      final items = parseItemsHeuristic(scrambledDmText);
+      expect(items.length, equals(2));
+      final (:name, :price) = parseLineItem(items[0]);
+      expect(name, equals('dmBio Fruchtaufstr.Erdb.250g'));
+      expect(price, closeTo(2.25, 0.001));
+    });
+  });
 }

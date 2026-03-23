@@ -127,6 +127,173 @@ double parseAmountImpl(String text) {
   return maxAmount;
 }
 
+/// Formatiert einen Geldbetrag als String mit Komma als Dezimaltrenner
+/// (z. B. 2.25 → "2,25"). Wird von [parseItemsHeuristic] verwendet.
+String _formatPriceComma(double price) =>
+    price.toStringAsFixed(2).replaceAll('.', ',');
+
+/// Heuristische Artikel-Erkennung für OCR-Texte, bei denen Namen und Preise
+/// vollständig getrennt in unterschiedlichen Textbereichen erscheinen
+/// (z. B. OCR hat alle Namen gesammelt und alle Preise an anderer Stelle).
+///
+/// Diese Funktion wird von [parseItemsImpl] als Fallback aufgerufen, wenn
+/// die primäre Look-Ahead-Logik keine Artikel gefunden hat.
+///
+/// Algorithmus (Heuristik-Queue-Logik):
+///   1. Jede Zeile wird durch einen aggressiven Junk-Filter geleitet
+///      (ATU, EFSTA, Buchung, Contactless, GmbH, Payback, Hash-Codes, …).
+///   2. Preiszahlen (X,XX) werden in [tempPrices] gesammelt; Duplikate,
+///      negative Beträge und MwSt-Beträge (Preis direkt nach MwSt-Label)
+///      werden ignoriert.
+///   3. Produktzeilen (Zeilen mit Buchstaben, die nicht Junk sind) werden
+///      in [tempNames] gesammelt.
+///   4. Match-Maker:
+///      - Gleich lang → paarweise Zuordnung in Reihenfolge des Erscheinens.
+///      - Mehr Preise als Namen → letzte N Preise nehmen (Summen/Terminal-
+///        beträge stehen oft am Ende) und den N Namen zuordnen.
+///      - Mehr Namen als Preise → so viele Paare wie möglich bilden.
+@visibleForTesting
+List<String> parseItemsHeuristic(String text) {
+  // ─── Aggressiver Junk-Filter ─────────────────────────────────────────────
+  // Enthält alle bekannten Nicht-Artikel-Schlüsselwörter aus dm-Kassenbons.
+  // Hinweis: „öffnungszeiten" enthält das deutsche Sonderzeichen „ö", das
+  // kein ASCII-\w-Zeichen ist; \b würde hier nicht korrekt greifen, daher
+  // wird dieses Wort ohne Wortgrenzen als Substring-Muster eingesetzt.
+  final junkLinePattern = RegExp(
+    r'\bATU\b'                  // österreichische Steuernummer
+    r'|\bEFSTA\b'               // EFSTA-Finanzamt-Hash
+    r'|\bBuchung\b'             // Buchungs-/Zahlungszeile
+    r'|\b[Cc]ontactless\b'      // kontaktloses Zahlen
+    r'|\bZahlung\b'             // Zahlungszeile
+    r'|\bPayback\b|\bPAYBACK\b' // Treuepunkte
+    r'|\bVisa\b|\bMastercard\b' // Zahlungsarten
+    r'|\bGmbH\b'                // Firmenbezeichnung
+    r'|\bMarktgraben\b'         // dm-spezifische Adresszeile
+    r'|\bInnsbruck\b'           // Ortsname
+    r'|\bDanke\b'               // Grußformel
+    r'|\bEinkauf\b'             // Kassentext (z. B. "Für diesen Einkauf")
+    r'|\bMensch\b'              // dm-Slogan "Hier bin ich Mensch"
+    r'|öffnungszeiten'          // Öffnungszeiten-Hinweis
+    r'|\bNettobetr\b'           // Netto-Betrag-Zeile
+    r'|\bMWSt\b|\bMwSt\b'      // Steuersatz-Label (z. B. MWSt-Satz, MWSt)
+    r'|\bPunkte\b'              // Payback-Punkte
+    r'|\bDebit\b|\bCredit\b'    // Zahlungsart
+    r'|\bEFT\b'                 // Electronic Funds Transfer
+    r'|\bkauf\b'                // dm-Slogan-Wort ("Hier kauf ich ein")
+    r'|#',                      // Hash-Codes (z. B. #31514283*…)
+    caseSensitive: false,
+  );
+
+  // Preis-Only-Muster (identisch mit parseItemsImpl)
+  final priceOnlyPattern = RegExp(r'^\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$');
+
+  // Standalone-MwSt-Label: Preis auf der Folgezeile ist ein Steuerbetrag
+  final mwstLabelPattern = RegExp(
+    r'^\s*(?:MWSt|MwSt)\s*$',
+    caseSensitive: false,
+  );
+
+  // Kurze Einzelzahl (1–2 Ziffern ohne Buchstaben, z. B. "2", "19")
+  final pureShortNumberPattern = RegExp(r'^\d{1,2}$');
+
+  final allLines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .toList();
+
+  final tempNames = <String>[];
+  final tempPrices = <double>[];
+  final seenPrices = <double>{};
+
+  for (int idx = 0; idx < allLines.length; idx++) {
+    final line = allLines[idx];
+    final prevLine = idx > 0 ? allLines[idx - 1] : '';
+
+    // Junk-Filter: Zeile enthält bekannte Nicht-Artikel-Schlüsselwörter
+    if (junkLinePattern.hasMatch(line)) continue;
+
+    // Prozentsatz-Zeilen (z. B. "2=10,00%")
+    if (line.contains('%')) continue;
+
+    // Negative Beträge (z. B. "-3,90")
+    if (line.startsWith('-')) continue;
+
+    // Zeilen, die mit einem Datum beginnen (z. B. "21.03.2026 13:45 …")
+    if (RegExp(r'^\d{1,2}\.\d{1,2}\.').hasMatch(line)) continue;
+
+    // Kartenummer-artige Zeichenketten (z. B. "1/1/1227**", "XXX9471")
+    if (RegExp(r'\*{3,}|[Xx]{3,}|\d{10,}').hasMatch(line)) continue;
+
+    // Kurze Einzelzahlen ("2", "19")
+    if (pureShortNumberPattern.hasMatch(line)) continue;
+
+    // Allein stehende Schlüsselwörter ohne Produktbezug
+    if (RegExp(r'^(?:SUMME|TOTAL|GESAMT|EUR|€)$', caseSensitive: false)
+        .hasMatch(line)) continue;
+
+    // Preis-Zeile: Betrag in tempPrices aufnehmen
+    if (priceOnlyPattern.hasMatch(line)) {
+      // Steuerbeträge überspringen: Preis direkt nach einem MwSt-Label
+      if (mwstLabelPattern.hasMatch(prevLine)) continue;
+
+      final rawPrice = line.split(RegExp(r'\s+'))[0].replaceAll(',', '.');
+      final price = double.tryParse(rawPrice);
+      if (price != null && price > 0 && !seenPrices.contains(price)) {
+        seenPrices.add(price);
+        tempPrices.add(price);
+      }
+      continue;
+    }
+
+    // Produktzeile: muss mindestens einen Buchstaben enthalten
+    if (!RegExp(r'[A-Za-zÄÖÜäöüß]').hasMatch(line)) continue;
+
+    // Reine Codes/Kürzel ohne Leerzeichen (z. B. "XXX9471", "O503") filtern
+    if (RegExp(r'^[A-Z0-9]{4,12}$').hasMatch(line)) continue;
+
+    // Reine Zeitangaben (z. B. "13:46:00") filtern
+    if (RegExp(r'^\d{1,2}:\d{2}(:\d{2})?$').hasMatch(line)) continue;
+
+    tempNames.add(line);
+  }
+
+  debugPrint(
+      '[OCR-Heuristic] tempNames=$tempNames, tempPrices=$tempPrices');
+
+  if (tempNames.isEmpty || tempPrices.isEmpty) return [];
+
+  // ─── Match-Maker: Namen und Preise zusammenführen ────────────────────────
+  final result = <String>[];
+  if (tempNames.length == tempPrices.length) {
+    // Perfekte Übereinstimmung: paarweise in Reihenfolge des Erscheinens
+    for (int i = 0; i < tempNames.length; i++) {
+      result.add('${tempNames[i]}  ${_formatPriceComma(tempPrices[i])}');
+    }
+  } else if (tempPrices.length > tempNames.length) {
+    // Mehr Preise als Namen: letzte N Preise nehmen
+    // (Summen/Terminalbeträge erscheinen typischerweise früh in der Liste,
+    // die Artikel-Preise am Ende)
+    final n = tempNames.length;
+    final pricesSlice = tempPrices.sublist(tempPrices.length - n);
+    for (int i = 0; i < n; i++) {
+      result.add('${tempNames[i]}  ${_formatPriceComma(pricesSlice[i])}');
+    }
+  } else {
+    // Mehr Namen als Preise: so viele Paare wie möglich bilden
+    for (int i = 0; i < tempPrices.length; i++) {
+      result.add('${tempNames[i]}  ${_formatPriceComma(tempPrices[i])}');
+    }
+  }
+
+  for (final r in result) {
+    final (:name, :price) = parseLineItem(r);
+    debugPrint('[OCR-Heuristic] Matched: Name=$name, Price=${price ?? "–"}');
+  }
+
+  return result;
+}
+
 /// Zerlegt den OCR-Text in Einzelzeilen und extrahiert Artikel per
 /// Look-Ahead-Logik.
 ///
@@ -157,6 +324,9 @@ double parseAmountImpl(String text) {
 ///        Fallback-Namen „Unbekannter Artikel".
 ///      - Mengenberechnungs-Zeilen (z. B. "4 X 1,59") und reine
 ///        Zahlen ohne Dezimaltrenner werden ignoriert.
+///   7. Heuristik-Fallback: Wenn Schritt 6 keine Artikel liefert (z. B.
+///      weil der OCR-Text Namen und Preise vollständig getrennt darstellt),
+///      wird [parseItemsHeuristic] als Fallback aufgerufen.
 ///
 /// Jeder erkannte Treffer wird per [debugPrint] mit
 /// `[OCR-Match] Found: Name=… Price=…` protokolliert.
@@ -352,6 +522,14 @@ List<String> parseItemsImpl(String text) {
 
     // Text-Zeile ohne zugehörigen Preis → ignorieren
     i++;
+  }
+
+  // ─── Schritt 6: Heuristik-Fallback für scrambled Receipts ────────────────
+  // Wenn die primäre Look-Ahead-Logik keine Artikel gefunden hat (z. B. weil
+  // der OCR-Text Namen und Preise vollständig getrennt darstellt und SUMME
+  // sehr früh im Text erscheint), greift die Heuristik-Queue-Logik.
+  if (result.isEmpty) {
+    return parseItemsHeuristic(text);
   }
 
   return result;

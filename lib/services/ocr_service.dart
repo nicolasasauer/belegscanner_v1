@@ -25,19 +25,35 @@ const String kUnknownItemName = 'Unbekannter Artikel';
 ///   - Überflüssige Leerzeichen werden entfernt.
 ///   - Der Name wird in „Title Case" umgewandelt (erster Buchstabe jedes
 ///     Wortes groß, Rest klein).
+///   - Bekannte OCR-Fehler werden korrigiert: eine führende `0` (Ziffer) in
+///     einem Wort, dessen Rest Buchstaben enthält, wird durch `O` (Buchstabe)
+///     ersetzt (z. B. „0lio" → „Olio").
 ///
 /// Beispiele:
 /// - "  RED   BULL  " → "Red Bull"
 /// - "dmBio Tofu Rosso 200g" → "Dmbio Tofu Rosso 200g"
 /// - "VOLLKORNBROT 750G" → "Vollkornbrot 750g"
+/// - "0lio Naturale" → "Olio Naturale"
 @visibleForTesting
 String normalizeName(String name) {
   final trimmed = name.trim().replaceAll(_whitespaceRunRegex, ' ');
   return trimmed.split(' ').map((word) {
     if (word.isEmpty) return word;
-    return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    // OCR-Fehlerkorrektur: führende '0' (Ziffer) → 'O' (Buchstabe),
+    // wenn der restliche Teil des Wortes Buchstaben enthält.
+    var corrected = word;
+    if (corrected.startsWith('0') &&
+        corrected.length > 1 &&
+        _lettersRegex.hasMatch(corrected.substring(1))) {
+      corrected = 'O${corrected.substring(1)}';
+    }
+    return corrected[0].toUpperCase() + corrected.substring(1).toLowerCase();
   }).join(' ');
 }
+
+/// Hilfs-Regex: prüft, ob ein String mindestens einen Buchstaben enthält
+/// (für die OCR-Fehlerkorrektur in [normalizeName]).
+final RegExp _lettersRegex = RegExp(r'[A-Za-zÄÖÜäöüß]');
 
 /// Hilfs-Regex: erkennt aufeinanderfolgende Leerzeichen (für [normalizeName]).
 final RegExp _whitespaceRunRegex = RegExp(r'\s+');
@@ -53,17 +69,21 @@ const Map<String, String> categoryMap = {
   'Brot': 'Lebensmittel',
   'Obst': 'Lebensmittel',
   'Gemüse': 'Lebensmittel',
+  'Fruchtaufstr': 'Lebensmittel',
   'Shampoo': 'Drogerie',
   'Zahnpasta': 'Drogerie',
   'Duschgel': 'Drogerie',
   'Balea': 'Drogerie',
   'Hygiene': 'Drogerie',
+  'Seife': 'Drogerie',
   'Pfand': 'Pfand',
   'Leergut': 'Pfand',
   'Red Bull': 'Getränke',
   'Cola': 'Getränke',
   'Wasser': 'Getränke',
   'Saft': 'Getränke',
+  'Wein': 'Getränke',
+  'Bier': 'Getränke',
 };
 
 /// Ermittelt die Kategorie eines Artikelnamens anhand von [categoryMap].

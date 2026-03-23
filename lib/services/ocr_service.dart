@@ -49,15 +49,18 @@ double _parseAmountImpl(String text) {
 /// Zerlegt den OCR-Text in Einzelzeilen, bereinigt OCR-Artefakte und
 /// filtert Header-Daten, Zahlungszeilen, Summenzeilen sowie Junk-Text heraus.
 ///
-/// Angewendete Filter-Schritte:
+/// Angewendete Schritte:
 ///   1. Header-, Meta-, Zahlungs- und Summenzeilen werden per Regex-
 ///      Ausschlussliste entfernt (z. B. GmbH, PLZ, Telefon, Summe, MwSt,
 ///      EUR, Zahlung, Visa, Payback, Werbe-Slogans).
 ///   2. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio", "dnBio")
 ///      werden gestripped, sodass der Artikelname erhalten bleibt.
-///   3. Nur Zeilen mit einem Dezimalpreis-Muster (z. B. "1,65" oder "2.99")
-///      werden als Artikel erkannt – reine Text-Zeilen (Adressen, Slogans)
-///      werden damit automatisch aussortiert.
+///   3. Paare aus [NAME] und [PREIS] werden erkannt:
+///      - Zeilen mit Text + Preis am Ende → direkt als Artikel übernommen.
+///      - Reine Preis-Zeilen nach einer Text-Zeile → zusammengeführt
+///        (OCR-Toleranz: OCR schiebt Preis manchmal in die nächste Zeile).
+///      - Standalone-Preis-Zeilen und reine Zahlen (z. B. MwSt-Sätze)
+///        werden ignoriert.
 List<String> _parseItemsImpl(String text) {
   // 1. Ausschlussmuster für typische Bon-Header, Meta-Daten, Summen- und
   //    Zahlungszeilen sowie Werbe-Slogans.
@@ -102,26 +105,69 @@ List<String> _parseItemsImpl(String text) {
   // 2. OCR-Junk-Präfixe (z. B. 'CnBio', 'unBio', 'dnBio', 'xnBio')
   final RegExp junkPrefixPattern = RegExp(r'^[A-Za-z]nBio\s+');
 
-  // 3. Artikel-Erkennungsmuster: Zeile muss mindestens einen Dezimalpreis
-  //    enthalten (z. B. "1,65", "2.99") – optionaler Tax-Code am Ende
-  //    (Buchstabe oder Ziffer, z. B. "A", "B", "1", "2").
-  //    \d{1,4}: Unterstützt Preise bis 9999,99 € für z. B. Elektronik oder
-  //    Großmengen-Artikel.
-  final RegExp itemPricePattern = RegExp(
-    r'\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
+  // 3a. Preis-Only-Muster: die ganze Zeile ist nur ein Preis
+  //     (z. B. "1,65", "2.99", "14,95 A")
+  final RegExp priceOnlyPattern = RegExp(
+    r'^\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
   );
 
-  return text
+  // 3b. Vollständiges Artikel-Muster: Zeile hat Namenstext + Preis am Ende
+  //     (z. B. "dmBio Tofu Rosso 200g 1,65", "Brot 750g 2,49 A").
+  //     Lookahead stellt sicher, dass mindestens ein Buchstabe im Namensteil
+  //     enthalten ist, um reine Zahlenzeilen auszuschließen.
+  final RegExp itemWithPricePattern = RegExp(
+    r'(?=.*[A-Za-zÄÖÜäöüß]).+\s+\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
+  );
+
+  // Schritt 1: Zeilen säubern und Header-/Meta-Zeilen entfernen
+  final lines = text
       .split('\n')
-      .map((line) => line.trim())
-      .where((line) => line.isNotEmpty)
-      // 1. Header- und Meta-Daten-Zeilen ausschließen
-      .where((line) => !headerPattern.hasMatch(line))
-      // 2. OCR-Junk-Präfixe am Zeilenanfang strippen
-      .map((line) => line.replaceFirst(junkPrefixPattern, '').trim())
-      // 3. Nur Zeilen mit Dezimalpreis-Muster als Artikel akzeptieren
-      .where((line) => itemPricePattern.hasMatch(line))
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .where((l) => !headerPattern.hasMatch(l))
+      .map((l) => l.replaceFirst(junkPrefixPattern, '').trim())
+      .where((l) => l.isNotEmpty)
       .toList();
+
+  // Schritt 2: Artikel-Paare (Name + Preis) erkennen und zusammenführen
+  final result = <String>[];
+  var i = 0;
+  while (i < lines.length) {
+    final line = lines[i];
+
+    // Standalone-Preis-Zeile (kein Namenstext davor in dieser Iteration)
+    if (priceOnlyPattern.hasMatch(line)) {
+      i++;
+      continue;
+    }
+
+    // Vollständiger Artikel: Name + Preis auf derselben Zeile
+    if (itemWithPricePattern.hasMatch(line)) {
+      result.add(line);
+      i++;
+      continue;
+    }
+
+    // Reine Text-Zeile: Prüfen ob die nächste Zeile ein Preis ist
+    // (OCR-Toleranz für zeilengetrennten Namen und Preis).
+    // Bedingung: die aktuelle Zeile muss mindestens einen Buchstaben enthalten,
+    // damit reine Zahlenzeilen (z. B. MwSt-Prozentsätze) nicht als Namen
+    // behandelt werden.
+    final bool nameHasLetter =
+        RegExp(r'[A-Za-zÄÖÜäöüß]').hasMatch(line);
+    if (nameHasLetter &&
+        i + 1 < lines.length &&
+        priceOnlyPattern.hasMatch(lines[i + 1])) {
+      result.add('$line  ${lines[i + 1].trim()}');
+      i += 2;
+      continue;
+    }
+
+    // Text-Zeile ohne zugehörigen Preis → ignorieren
+    i++;
+  }
+
+  return result;
 }
 
 /// Top-level-Funktion für [compute]: Parst OCR-Text und gibt Betrag und

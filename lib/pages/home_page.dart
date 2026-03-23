@@ -3,14 +3,17 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/receipt.dart';
 import '../services/database_service.dart';
 import '../services/export_service.dart';
 import '../services/ocr_service.dart';
 import '../services/processor_service.dart';
+import '../widgets/fab_menu_item.dart';
+import '../widgets/filter_bar.dart';
+import '../widgets/processing_receipt_card.dart';
 import '../widgets/receipt_detail_view.dart';
+import '../widgets/receipt_list_tile.dart';
 import 'category_management_page.dart';
 
 /// Hauptseite der Bong-Scanner-App.
@@ -512,7 +515,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          _FilterBar(
+          FilterBar(
             hasReceipts: _receipts.isNotEmpty,
             selectedDay: _selectedDay,
             selectedMonth: _selectedMonth,
@@ -584,8 +587,8 @@ class _HomePageState extends State<HomePage> {
                             onDismissed: (_) => _deleteReceipt(receipt),
                             child: receipt.status == 'processing' ||
                                     receipt.status == 'failed'
-                                ? _ProcessingReceiptCard(receipt: receipt)
-                                : _ReceiptListTile(
+                                ? ProcessingReceiptCard(receipt: receipt)
+                                : ReceiptListTile(
                                     receipt: receipt,
                                     dateFormat: _dateFormat,
                                     currencyFormat: _currencyFormat,
@@ -773,7 +776,7 @@ class _HomePageState extends State<HomePage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  _FabMenuItem(
+                  FabMenuItem(
                     icon: Icons.photo_library_outlined,
                     label: 'Bilder Import',
                     onPressed: () {
@@ -782,7 +785,7 @@ class _HomePageState extends State<HomePage> {
                     },
                   ),
                   const SizedBox(height: 10),
-                  _FabMenuItem(
+                  FabMenuItem(
                     icon: Icons.camera_alt_outlined,
                     label: 'Kamera Scan',
                     onPressed: () {
@@ -835,360 +838,6 @@ class _HomePageState extends State<HomePage> {
                   ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// FAB-Menü-Element Widget
-// =============================================================================
-
-class _FabMenuItem extends StatelessWidget {
-  const _FabMenuItem({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Material(
-          elevation: 2,
-          borderRadius: BorderRadius.circular(8),
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Text(label, style: Theme.of(context).textTheme.labelLarge),
-          ),
-        ),
-        const SizedBox(width: 12),
-        FloatingActionButton.small(
-          heroTag: label,
-          onPressed: onPressed,
-          child: Icon(icon),
-        ),
-      ],
-    );
-  }
-}
-
-// =============================================================================
-// Filter-Bar Widget
-// =============================================================================
-
-class _FilterBar extends StatelessWidget {
-  const _FilterBar({
-    required this.hasReceipts,
-    required this.selectedDay,
-    required this.selectedMonth,
-    required this.selectedYear,
-    required this.onPickDay,
-    required this.onPickMonth,
-    required this.onPickYear,
-    required this.onClearAll,
-  });
-
-  final bool hasReceipts;
-  final int? selectedDay;
-  final int? selectedMonth;
-  final int? selectedYear;
-  final VoidCallback onPickDay;
-  final VoidCallback onPickMonth;
-  final VoidCallback onPickYear;
-  final VoidCallback onClearAll;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasFilter =
-        selectedDay != null || selectedMonth != null || selectedYear != null;
-    if (!hasReceipts && !hasFilter) return const SizedBox.shrink();
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              _buildDateChip(
-                context: context,
-                label: selectedDay != null
-                    ? 'Tag: ${selectedDay.toString().padLeft(2, '0')}.'
-                        '${selectedMonth.toString().padLeft(2, '0')}.'
-                        '$selectedYear'
-                    : 'Tag',
-                isSelected: selectedDay != null,
-                onTap: onPickDay,
-              ),
-              const SizedBox(width: 8),
-              _buildDateChip(
-                context: context,
-                label: selectedMonth != null && selectedDay == null
-                    ? 'Monat: ${_monthName(selectedMonth!)} $selectedYear'
-                    : 'Monat',
-                isSelected: selectedMonth != null && selectedDay == null,
-                onTap: onPickMonth,
-              ),
-              const SizedBox(width: 8),
-              _buildDateChip(
-                context: context,
-                label: selectedYear != null &&
-                        selectedMonth == null &&
-                        selectedDay == null
-                    ? 'Jahr: $selectedYear'
-                    : 'Jahr',
-                isSelected: selectedYear != null &&
-                    selectedMonth == null &&
-                    selectedDay == null,
-                onTap: onPickYear,
-              ),
-              if (hasFilter) ...[
-                const SizedBox(width: 12),
-                ActionChip(
-                  avatar: const Icon(Icons.clear, size: 16),
-                  label: const Text('Alle anzeigen'),
-                  onPressed: onClearAll,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ],
-          ),
-        ),
-        const Divider(height: 1),
-      ],
-    );
-  }
-
-  Widget _buildDateChip({
-    required BuildContext context,
-    required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (_) => onTap(),
-      avatar: isSelected ? null : const Icon(Icons.calendar_today, size: 14),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-
-  String _monthName(int month) {
-    const names = [
-      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
-    ];
-    return names[month - 1];
-  }
-}
-
-// =============================================================================
-// Verarbeitungs-Platzhalter Widget (shimmer-ähnlich + LinearProgressIndicator)
-// =============================================================================
-
-/// Zeigt einen Beleg-Platzhalter während der Hintergrundverarbeitung an.
-///
-/// Enthält einen [LinearProgressIndicator] für den aktuellen Fortschritt
-/// und einen animierten Schimmer-Effekt, der die laufende Verarbeitung signalisiert.
-class _ProcessingReceiptCard extends StatefulWidget {
-  const _ProcessingReceiptCard({required this.receipt});
-  final Receipt receipt;
-
-  @override
-  State<_ProcessingReceiptCard> createState() => _ProcessingReceiptCardState();
-}
-
-class _ProcessingReceiptCardState extends State<_ProcessingReceiptCard>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _shimmer;
-
-  @override
-  void initState() {
-    super.initState();
-    _shimmer = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _shimmer.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isFailed = widget.receipt.status == 'failed';
-
-    return AnimatedBuilder(
-      animation: _shimmer,
-      builder: (_, __) {
-        final shimmerAlpha = isFailed ? 0.0 : _shimmer.value * 0.12;
-        return Card(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24.0),
-          ),
-          elevation: 0.5,
-          color: isFailed
-              ? colorScheme.errorContainer
-              : Color.lerp(
-                  colorScheme.surfaceContainerLow,
-                  colorScheme.primaryContainer,
-                  shimmerAlpha,
-                ),
-          child: Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      isFailed
-                          ? Icons.error_outline
-                          : Icons.hourglass_top_outlined,
-                      color: isFailed
-                          ? colorScheme.onErrorContainer
-                          : colorScheme.primary,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      isFailed ? 'Verarbeitung fehlgeschlagen' : 'Wird verarbeitet…',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: isFailed
-                                ? colorScheme.onErrorContainer
-                                : colorScheme.onSurface,
-                          ),
-                    ),
-                    const Spacer(),
-                    if (!isFailed)
-                      Text(
-                        '${(widget.receipt.progress * 100).round()} %',
-                        style:
-                            Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                      ),
-                  ],
-                ),
-                if (!isFailed) ...[
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: widget.receipt.progress,
-                      minHeight: 4,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// =============================================================================
-// Beleg-ListTile Widget
-// =============================================================================
-
-class _ReceiptListTile extends StatelessWidget {
-  const _ReceiptListTile({
-    required this.receipt,
-    required this.dateFormat,
-    required this.currencyFormat,
-    required this.onTap,
-  });
-
-  final Receipt receipt;
-  final DateFormat dateFormat;
-  final NumberFormat currencyFormat;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24.0),
-      ),
-      elevation: 0.5,
-      child: ListTile(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24.0),
-        ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: _buildThumbnail(context),
-        title: Text(
-          currencyFormat.format(receipt.totalAmount),
-          style: Theme.of(context)
-              .textTheme
-              .titleMedium
-              ?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Text(dateFormat.format(receipt.date)),
-        trailing: Text(
-          '${receipt.items.length} Pos.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        onTap: onTap,
-      ),
-    );
-  }
-
-  Widget _buildThumbnail(BuildContext context) {
-    final path = receipt.imagePath;
-    if (path != null) {
-      return GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute<void>(
-            builder: (_) => FullscreenImageViewer(imagePath: path),
-          ),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Image.file(
-            File(path),
-            width: 52,
-            height: 52,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _placeholder(context),
-          ),
-        ),
-      );
-    }
-    return _placeholder(context);
-  }
-
-  Widget _placeholder(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 52,
-        height: 52,
-        color: Theme.of(context).colorScheme.primaryContainer,
-        alignment: Alignment.center,
-        child: Icon(
-          Icons.receipt_outlined,
-          color: Theme.of(context).colorScheme.onPrimaryContainer,
         ),
       ),
     );

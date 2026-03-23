@@ -771,9 +771,10 @@ class OcrService {
     // Kategorien aus der Datenbank laden (für dynamische Zuordnung).
     // Schlägt das Laden fehl, greift der statische categoryMap-Fallback.
     List<Map<String, dynamic>> categoryData = [];
-    if (_databaseService != null) {
+    final db = _databaseService;
+    if (db != null) {
       try {
-        final cats = await _databaseService.getCategories();
+        final cats = await db.getCategories();
         categoryData = cats.map((c) => c.toMap()).toList();
       } catch (e) {
         debugPrint('[OcrService] Kategorien konnten nicht geladen werden: $e');

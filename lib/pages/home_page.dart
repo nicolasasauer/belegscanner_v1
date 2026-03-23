@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import '../models/receipt.dart';
 import '../services/database_service.dart';
 import '../services/ocr_service.dart';
+import 'category_management_page.dart';
 
 /// Hauptseite der Bong-Scanner-App.
 ///
@@ -58,8 +59,8 @@ class _HomePageState extends State<HomePage> {
   // Services & Formatter
   // ---------------------------------------------------------------------------
 
-  final OcrService _ocrService = OcrService();
   final DatabaseService _databaseService = DatabaseService();
+  late final OcrService _ocrService;
 
   /// Formatter für Euro-Beträge (z. B. "12,50 €").
   final NumberFormat _currencyFormat = NumberFormat.currency(
@@ -77,6 +78,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _ocrService = OcrService(databaseService: _databaseService);
     // Android 16 killt Apps, die im ersten Frame zu viel CPU beanspruchen.
     // Kleine Verzögerung gibt dem Framework Zeit, den ersten Frame zu rendern,
     // bevor Datenbank und ML Kit initialisiert werden.
@@ -640,6 +642,55 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       floatingActionButton: _buildFab(context),
+      drawer: Drawer(
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              DrawerHeader(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.receipt_long_outlined,
+                      size: 40,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Bong-Scanner',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onPrimaryContainer,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.label_outline),
+                title: const Text('Kategorien verwalten'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => CategoryManagementPage(
+                        databaseService: _databaseService,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/receipt.dart';
+import 'database_service.dart';
 
 // ---------------------------------------------------------------------------
 // Top-level Parsing-Funktionen (erforderlich für compute-Isolate)
@@ -101,6 +102,32 @@ String categorizeItem(String name) {
   for (final entry in categoryMap.entries) {
     if (lowerName.contains(entry.key.toLowerCase())) {
       return entry.value;
+    }
+  }
+  return 'Sonstiges';
+}
+
+/// Ermittelt die Kategorie eines Artikelnamens anhand einer dynamisch
+/// geladenen Liste von Kategorie-Daten aus der Datenbank.
+///
+/// Jeder Eintrag in [categoryData] ist eine Map mit den Schlüsseln
+/// `name` (String) und `keywords` (String, kommagetrennt).
+///
+/// Fällt auf „Sonstiges" zurück, wenn keine Übereinstimmung gefunden wird.
+/// Ist [categoryData] leer, wird auf [categorizeItem] zurückgegriffen.
+String _smartCategorize(
+    String name, List<Map<String, dynamic>> categoryData) {
+  if (categoryData.isEmpty) {
+    return categorizeItem(name);
+  }
+  final lowerName = name.toLowerCase();
+  for (final catMap in categoryData) {
+    final kwString = catMap['keywords'] as String;
+    for (final kw in kwString.split(',')) {
+      final trimmed = kw.trim().toLowerCase();
+      if (trimmed.isNotEmpty && lowerName.contains(trimmed)) {
+        return catMap['name'] as String;
+      }
     }
   }
   return 'Sonstiges';
@@ -627,11 +654,20 @@ List<String> parseItemsImpl(String text) {
 /// Top-level-Funktion für [compute]: Parst OCR-Text und gibt Betrag,
 /// normalisierte Artikel-Liste und Kategorien zurück.
 ///
+/// Erwartet eine Map mit den Schlüsseln:
+/// - `'text'`: der zu parsende OCR-Rohtext (String)
+/// - `'categoryData'`: Liste von Kategorie-Maps aus der Datenbank
+///   (jede Map hat `name` und `keywords`). Kann leer sein – dann greift der
+///   statische [categoryMap]-Fallback.
+///
 /// Nach dem Extrahieren der Artikel werden [normalizeName] und
-/// [categorizeItem] auf jeden Artikel angewendet, sodass die zurückgegebenen
-/// Items bereits normalisierte Namen tragen und die Kategorien-Liste parallel
-/// befüllt ist.
-Map<String, dynamic> _parseOcrText(String text) {
+/// [_smartCategorize] auf jeden Artikel angewendet, sodass die
+/// zurückgegebenen Items bereits normalisierte Namen tragen und die
+/// Kategorien-Liste parallel befüllt ist.
+Map<String, dynamic> _parseOcrText(Map<String, dynamic> params) {
+  final text = params['text'] as String;
+  final rawCategoryData = params['categoryData'] as List<dynamic>? ?? [];
+  final categoryData = rawCategoryData.cast<Map<String, dynamic>>();
   final rawItems = parseItemsImpl(text);
   final normalizedItems = <String>[];
   final categories = <String>[];
@@ -639,7 +675,7 @@ Map<String, dynamic> _parseOcrText(String text) {
   for (final item in rawItems) {
     final (:name, :price) = parseLineItem(item);
     final normalizedName = normalizeName(name);
-    categories.add(categorizeItem(normalizedName));
+    categories.add(_smartCategorize(normalizedName, categoryData));
     if (price != null) {
       normalizedItems.add('$normalizedName  ${_formatPriceComma(price)}');
     } else {
@@ -664,9 +700,17 @@ Map<String, dynamic> _parseOcrText(String text) {
 ///   - Bildaufnahme via Kamera
 ///   - Texterkennung mit Google ML Kit
 ///   - Parsing des erkannten Textes (Betrag, Artikel) im Background-Isolate
+///
+/// Der optionale [databaseService] wird genutzt, um die benutzerdefinierte
+/// Kategorienliste für die automatische Artikelzuordnung zu laden.
+/// Ist er nicht angegeben, greift der statische [categoryMap]-Fallback.
 class OcrService {
+  OcrService({DatabaseService? databaseService})
+      : _databaseService = databaseService;
+
   final ImagePicker _picker = ImagePicker();
   final _uuid = const Uuid();
+  final DatabaseService? _databaseService;
 
   /// Öffnet die Kamera, nimmt ein Bild auf und erkennt den Text per OCR.
   ///
@@ -724,9 +768,24 @@ class OcrService {
     // App-Neustart noch vorhanden ist.
     final String? permanentImagePath = await _persistImage(tempImagePath);
 
+    // Kategorien aus der Datenbank laden (für dynamische Zuordnung).
+    // Schlägt das Laden fehl, greift der statische categoryMap-Fallback.
+    List<Map<String, dynamic>> categoryData = [];
+    if (_databaseService != null) {
+      try {
+        final cats = await _databaseService.getCategories();
+        categoryData = cats.map((c) => c.toMap()).toList();
+      } catch (e) {
+        debugPrint('[OcrService] Kategorien konnten nicht geladen werden: $e');
+      }
+    }
+
     // Parsing im Background-Isolate ausführen, damit der UI-Thread
     // (insbesondere der CircularProgressIndicator) nicht blockiert wird
-    final result = await compute(_parseOcrText, fullText);
+    final result = await compute(_parseOcrText, {
+      'text': fullText,
+      'categoryData': categoryData,
+    });
 
     return Receipt(
       id: _uuid.v4(),

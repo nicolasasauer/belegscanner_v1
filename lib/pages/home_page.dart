@@ -1058,7 +1058,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
 
   /// Maximales Zeitfenster (in Sekunden), in dem 5 Taps registriert werden
   /// müssen, um den Debug-Modus auszulösen.
-  static const _debugTapWindow = Duration(seconds: 2);
+  static const _debugTapWindow = Duration(seconds: 3);
 
   /// Anzahl der erforderlichen Taps für den Debug-Trigger.
   static const _debugTapCount = 5;
@@ -1300,6 +1300,35 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                               onPressed: () =>
                                   setState(() => _isEditing = true),
                             ),
+                      // Drei-Punkte-Menü
+                      PopupMenuButton<String>(
+                        icon: const Icon(
+                          Icons.more_vert,
+                          semanticLabel: 'Weitere Optionen',
+                        ),
+                        tooltip: 'Weitere Optionen',
+                        onSelected: (value) {
+                          if (value == 'debug_raw_ocr') {
+                            _showRawOcrSheet();
+                          }
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'debug_raw_ocr',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.bug_report_outlined,
+                                  size: 18,
+                                  semanticLabel: '',
+                                ),
+                                SizedBox(width: 8),
+                                Text('DEBUG: Raw OCR'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
 
@@ -1387,6 +1416,8 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     _imageTapTimestamps.removeWhere(
       (t) => now.difference(t) > _debugTapWindow,
     );
+
+    debugPrint('Tap count: ${_imageTapTimestamps.length}');
 
     if (_imageTapTimestamps.length >= _debugTapCount) {
       _imageTapTimestamps.clear();
@@ -1526,10 +1557,11 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   }
 
   /// Belegbild-Vorschau: Tipp öffnet die Vollbild-Ansicht.
-  /// 5 schnelle Taps innerhalb von 2 Sekunden aktivieren den Raw-OCR-Debug-Modus.
+  /// 5 schnelle Taps innerhalb von 3 Sekunden aktivieren den Raw-OCR-Debug-Modus.
   Widget _buildImagePreview(BuildContext context) {
     final path = widget.receipt.imagePath!;
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: _onImageTap,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),

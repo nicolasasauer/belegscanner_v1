@@ -9,12 +9,19 @@ void main() {
   // ---------------------------------------------------------------------------
 
   group('parseItemsImpl – dm-Beleg', () {
-    // Simulierter OCR-Output eines dm-Belegs:
-    // Zwei Artikel auf derselben Zeile (Name + Preis), gefolgt von SUMME.
+    // Simulierter OCR-Output eines echten dm-Belegs:
+    // Name und Preis stehen auf ZWEI getrennten Zeilen (Look-Ahead-Format).
+    // Header-Zeilen (GmbH, Datum) werden durch Header-Cut ignoriert.
+    // SUMME steht auf einer eigenen Zeile, Betrag auf der nächsten (EUR X,XX).
     const dmReceiptText =
-        'dmBio Fruchtaufstr. Erdb. 250g 2,25 2\n'
-        'dmBio Tofu Rosso 200g 1,65 2\n'
-        'SUMME 3,90';
+        'dm drogerie markt GmbH\n'
+        '20.03.2026 13:46\n'
+        'dmBio Fruchtaufstr. Erdb. 250g\n'
+        '2,25 2\n'
+        'dmBio Tofu Rosso 200g\n'
+        '1,65 2\n'
+        'SUMME\n'
+        'EUR 3,90';
 
     test('Erkennt genau zwei Artikel', () {
       final items = parseItemsImpl(dmReceiptText);
@@ -39,6 +46,15 @@ void main() {
     test('SUMME-Zeile wird ignoriert', () {
       final items = parseItemsImpl(dmReceiptText);
       expect(items.any((i) => i.toLowerCase().contains('summe')), isFalse);
+    });
+
+    test('Header-Zeile "GmbH" erscheint nicht in der Artikelliste', () {
+      final items = parseItemsImpl(dmReceiptText);
+      expect(items.any((i) => i.contains('GmbH')), isFalse);
+    });
+
+    test('Gesamtbetrag aus "SUMME\\nEUR 3,90" wird korrekt erkannt', () {
+      expect(parseAmountImpl(dmReceiptText), closeTo(3.90, 0.001));
     });
   });
 
@@ -95,6 +111,22 @@ void main() {
       final (:name, :price) = parseLineItem(item);
       expect(name, equals('dmBio Milch 1L'));
       expect(price, equals(1.19));
+    });
+
+    test(
+        'Sperrliste: GmbH-Zeile ohne Datum-Anker wird als Header übersprungen',
+        () {
+      // Kein Datum → kein Header-Cut. Sperrliste überspringt "GmbH"-Zeilen.
+      const blocklistText =
+          'Muster GmbH\n'
+          'UID-Nr. AT123456789\n'
+          'Apfelsaft 1L 1,49\n'
+          'Wasser 0,5L 0,79\n'
+          'SUMME 2,28';
+      final items = parseItemsImpl(blocklistText);
+      expect(items.any((i) => i.contains('GmbH')), isFalse);
+      expect(items.any((i) => i.contains('UID-Nr')), isFalse);
+      expect(items.any((i) => i.contains('Apfelsaft')), isTrue);
     });
 
     test('MwSt-Zeilen können als Artikel erkannt werden (Price-First-Logik)', () {
@@ -212,6 +244,21 @@ void main() {
     test('SUMME auf nächster Zeile wird erkannt', () {
       const text = 'Artikel 1 5,00\nSUMME\n5,00';
       expect(parseAmountImpl(text), closeTo(5.00, 0.001));
+    });
+
+    test('SUMME mit EUR-Präfix auf nächster Zeile wird erkannt (dm-Format)', () {
+      const text = 'Artikel 1 2,25\nArtikel 2 1,65\nSUMME\nEUR 3,90';
+      expect(parseAmountImpl(text), closeTo(3.90, 0.001));
+    });
+
+    test(
+        'EUR X,XX auf nächster Zeile nach SUMME stört Artikel-Erkennung nicht',
+        () {
+      // Sicherstellen, dass "EUR 3,90" nach dem Footer-Cut nicht als Artikel landet.
+      const text = 'Artikel 1 2,25\nArtikel 2 1,65\nSUMME\nEUR 3,90';
+      final items = parseItemsImpl(text);
+      expect(items.length, equals(2));
+      expect(items.any((i) => i.contains('EUR')), isFalse);
     });
   });
 

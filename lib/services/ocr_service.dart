@@ -128,29 +128,31 @@ double parseAmountImpl(String text) {
 }
 
 /// Zerlegt den OCR-Text in Einzelzeilen und extrahiert Artikel per
-/// Preis-Anker-Logik (Price-First).
+/// Look-Ahead-Logik.
 ///
 /// Algorithmus (ladenunabhängig / generisch):
-///   1. Header-Cut: Alle Zeilen vor dem ersten Datum (TT.MM.JJJJ) oder der
+///   1. Vorbereitung: Leere Zeilen und Strich-Trennlinien werden entfernt.
+///   2. Header-Cut: Alle Zeilen vor dem ersten Datum (TT.MM.JJJJ) oder der
 ///      ersten Uhrzeit (HH:MM) werden übersprungen. Ist kein Anker vorhanden,
-///      werden alle Zeilen verarbeitet.
-///   2. Footer-Cut: Sobald SUMME, TOTAL, GESAMT oder ZAHLBETRAG erscheint,
+///      werden alle Zeilen verarbeitet. Zusätzlich werden typische
+///      Header-Zeilen (z. B. mit „GmbH", „UID-Nr", Telefonnummern) ignoriert.
+///   3. Footer-Cut: Sobald SUMME, TOTAL, GESAMT oder ZAHLBETRAG erscheint,
 ///      wird die Artikel-Suche beendet. Terminal-Daten, Payback und
 ///      Grußformeln dahinter werden vollständig ignoriert.
-///   3. Müll-Muster: Herausgefiltert werden Zeilen mit mehr als 15
+///   4. Müll-Muster: Herausgefiltert werden Zeilen mit mehr als 15
 ///      aufeinanderfolgenden Ziffern (Terminal-IDs/IBANs), Zeilen aus
 ///      ausschließlich Sonderzeichen (z. B. "------") sowie Zeilen mit
 ///      URLs oder E-Mail-Adressen.
-///   4. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio") werden
+///   5. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio") werden
 ///      gestripped, sodass der Artikelname erhalten bleibt.
-///   5. Preis-Anker-Erkennung: Jede Zeile, die einen Betrag enthält, wird als
-///      Artikel gewertet (Preis-First-Logik):
+///   6. Look-Ahead-Erkennung (Artikel-Paar-Logik):
 ///      - Zeilen mit Text + Preis am Ende → direkt als Artikel übernommen.
 ///      - Reine Text-Zeilen gefolgt von einer Mengenberechnung
 ///        (z. B. "4 X 1,59") und dann einer Preis-Zeile →
 ///        zusammengeführt (Multi-Line-Artikel).
-///      - Reine Text-Zeilen gefolgt von einer reinen Preis-Zeile →
-///        zusammengeführt (OCR-Split).
+///      - Reine Text-Zeilen gefolgt von einer Preis-Zeile (Look-Ahead) →
+///        zusammengeführt; aus der Preis-Zeile wird nur die erste Zahl
+///        extrahiert (z. B. „2,25 2" → Preis 2,25).
 ///      - Standalone-Preis-Zeilen ohne vorherigen Namenstext erhalten den
 ///        Fallback-Namen „Unbekannter Artikel".
 ///      - Mengenberechnungs-Zeilen (z. B. "4 X 1,59") und reine
@@ -166,6 +168,18 @@ List<String> parseItemsImpl(String text) {
   // des Bon-Headers. Alle Zeilen davor werden übersprungen.
   final RegExp headerCutPattern = RegExp(
     r'\b\d{1,2}\.\d{1,2}\.\d{2,4}\b|\b\d{1,2}:\d{2}\b',
+  );
+
+  // Sperrliste für Header-Zeilen: Typische Bestandteile des Bon-Headers,
+  // die als Artikel ignoriert werden sollen (GmbH, UID-Nr., Straßenangaben,
+  // Telefonnummern). Diese Muster werden nur auf Header-Zeilen (vor dem
+  // Date-Anchor) angewendet; innerhalb der Artikelsektion bleiben sie
+  // unberührt.
+  // Hinweis: „Marktgraben" ist eine typische Adresszeile im dm-Bon-Header
+  // und wird daher explizit in die Sperrliste aufgenommen.
+  final RegExp headerBlocklistPattern = RegExp(
+    r'\bGmbH\b|UID-Nr|Marktgraben|\bTel\.?\s*\d|\b\d{3,}\s*[-/]\s*\d{3,}\b',
+    caseSensitive: false,
   );
 
   // Footer-Cut: Diese Schlüsselwörter markieren das Ende der Artikel-Sektion.
@@ -227,11 +241,24 @@ List<String> parseItemsImpl(String text) {
   // ─── Schritt 2: Header-Cut ───────────────────────────────────────────────
   // Überspringe alle Zeilen vor dem ersten Datum / der ersten Uhrzeit.
   // Wenn kein Anker gefunden wird, beginne von vorne (kein Header-Cut).
+  // Zeilen vor dem Anker, die auf die Sperrliste passen (GmbH, UID-Nr,
+  // Marktgraben, Telefonnummern), werden ebenfalls explizit ignoriert.
   int startIndex = 0;
+  int headerAnchorIndex = -1;
   for (int i = 0; i < allLines.length; i++) {
     if (headerCutPattern.hasMatch(allLines[i])) {
+      headerAnchorIndex = i;
       startIndex = i;
       break;
+    }
+  }
+  // Sperrliste: Wenn kein Datum-Anker gefunden wurde, überspringe
+  // führende Zeilen, die Header-Begriffe wie „GmbH", „UID-Nr", „Marktgraben"
+  // oder Telefonnummern enthalten.
+  if (headerAnchorIndex == -1) {
+    while (startIndex < allLines.length &&
+        headerBlocklistPattern.hasMatch(allLines[startIndex])) {
+      startIndex++;
     }
   }
 
@@ -256,7 +283,7 @@ List<String> parseItemsImpl(String text) {
       .where((l) => l.isNotEmpty)
       .toList();
 
-  // ─── Schritt 5: Artikel per Preis-Anker erkennen (Price-First) ───────────
+  // ─── Schritt 5: Artikel per Look-Ahead-Logik erkennen ───────────────────
   final result = <String>[];
   var i = 0;
   while (i < lines.length) {
@@ -278,7 +305,7 @@ List<String> parseItemsImpl(String text) {
       continue;
     }
 
-    // Reine Text-Zeile: Prüfen ob folgende Zeilen einen Preis liefern.
+    // Look-Ahead: Reine Text-Zeile mit Preis auf einer der Folgezeilen.
     // Bedingung: die aktuelle Zeile muss mindestens einen Buchstaben enthalten,
     // damit reine Zahlenzeilen (z. B. MwSt-Prozentsätze) nicht als Namen
     // behandelt werden.
@@ -298,7 +325,9 @@ List<String> parseItemsImpl(String text) {
         continue;
       }
 
-      // Fall B: Name | Preis (OCR hat Preis auf die nächste Zeile verschoben)
+      // Fall B (Look-Ahead): Name | Preis-Zeile (beginnt mit X,XX).
+      // Preis-Extraktion: Aus der Preis-Zeile wird nur die erste Zahl
+      // verwendet (z. B. aus „2,25 2" wird Preis 2,25).
       if (i + 1 < lines.length &&
           priceOnlyPattern.hasMatch(lines[i + 1])) {
         final merged = '$line  ${lines[i + 1].trim()}';

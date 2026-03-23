@@ -55,6 +55,7 @@ void main() {
         date: DateTime(2026, 1, 1),
         totalAmount: 10.0,
         items: const ['Artikel A'],
+        categories: const ['Lebensmittel'],
         imagePath: '/tmp/a.jpg',
       );
 
@@ -64,6 +65,7 @@ void main() {
       expect(copy.date, equals(DateTime(2026, 1, 1)));
       expect(copy.totalAmount, equals(99.99));
       expect(copy.items, equals(['Artikel A']));
+      expect(copy.categories, equals(['Lebensmittel']));
       expect(copy.imagePath, equals('/tmp/a.jpg'));
     });
 
@@ -73,19 +75,36 @@ void main() {
         date: DateTime(2026, 6, 15),
         totalAmount: 5.0,
         items: const [],
+        categories: const [],
         imagePath: '/tmp/orig.jpg',
       );
 
       final updated = original.copyWith(
         id: 'updated',
         items: ['Neuer Artikel'],
+        categories: ['Sonstiges'],
       );
 
       expect(updated.id, equals('updated'));
       expect(updated.items, equals(['Neuer Artikel']));
+      expect(updated.categories, equals(['Sonstiges']));
       // Unveränderte Felder bleiben erhalten
       expect(updated.date, equals(DateTime(2026, 6, 15)));
       expect(updated.totalAmount, equals(5.0));
+    });
+
+    test('categoryAt gibt die richtige Kategorie zurück', () {
+      final receipt = Receipt(
+        id: 'cat-test',
+        date: DateTime(2026, 3, 22),
+        totalAmount: 5.0,
+        items: const ['Milch 1,29', 'Brot 2,49', 'Unbekannt 1,22'],
+        categories: const ['Lebensmittel', 'Lebensmittel'],
+      );
+      expect(receipt.categoryAt(0), equals('Lebensmittel'));
+      expect(receipt.categoryAt(1), equals('Lebensmittel'));
+      // Index 2 existiert nicht in categories → Fallback "Sonstiges"
+      expect(receipt.categoryAt(2), equals('Sonstiges'));
     });
 
     test('toString enthält alle relevanten Felder', () {
@@ -113,6 +132,7 @@ void main() {
         date: date,
         totalAmount: 14.95,
         items: ['Brot 2,49', 'Milch 1,29'],
+        categories: ['Lebensmittel', 'Lebensmittel'],
         imagePath: '/tmp/scan.jpg',
         rawText: 'Bäckerei\n22.03.2026\nBrot 2,49\nSUMME 14,95',
       );
@@ -123,6 +143,7 @@ void main() {
       expect(map['date'], equals(date.toIso8601String()));
       expect(map['totalAmount'], equals(14.95));
       expect(map['items'], equals('["Brot 2,49","Milch 1,29"]'));
+      expect(map['categories'], equals('["Lebensmittel","Lebensmittel"]'));
       expect(map['imagePath'], equals('/tmp/scan.jpg'));
       expect(map['rawText'], equals('Bäckerei\n22.03.2026\nBrot 2,49\nSUMME 14,95'));
     });
@@ -135,6 +156,7 @@ void main() {
         items: [],
       );
       expect(receipt.toMap()['rawText'], isNull);
+      expect(receipt.toMap()['categories'], equals('[]'));
     });
 
     test('fromMap erstellt einen korrekten Receipt', () {
@@ -143,6 +165,7 @@ void main() {
         'date': '2026-03-22T10:30:00.000',
         'totalAmount': 9.99,
         'items': '["Käse","Butter"]',
+        'categories': '["Lebensmittel","Lebensmittel"]',
         'imagePath': '/tmp/img.jpg',
         'rawText': 'Supermarkt\n22.03.2026\nKäse 5,99\nButter 3,99\nSUMME 9,99',
       };
@@ -153,6 +176,7 @@ void main() {
       expect(receipt.date, equals(DateTime(2026, 3, 22, 10, 30)));
       expect(receipt.totalAmount, equals(9.99));
       expect(receipt.items, equals(['Käse', 'Butter']));
+      expect(receipt.categories, equals(['Lebensmittel', 'Lebensmittel']));
       expect(receipt.imagePath, equals('/tmp/img.jpg'));
       expect(receipt.rawText, contains('SUMME 9,99'));
     });
@@ -176,6 +200,7 @@ void main() {
         date: DateTime(2026, 5, 1, 12, 0),
         totalAmount: 23.45,
         items: ['Artikel A', 'Artikel B', 'Artikel C'],
+        categories: ['Lebensmittel', 'Getränke', 'Sonstiges'],
         imagePath: '/tmp/roundtrip.jpg',
         rawText: 'Shop\n01.05.2026 12:00\nArtikel A 10,00\nSUMME 23,45',
       );
@@ -186,6 +211,7 @@ void main() {
       expect(restored.date, equals(original.date));
       expect(restored.totalAmount, equals(original.totalAmount));
       expect(restored.items, equals(original.items));
+      expect(restored.categories, equals(original.categories));
       expect(restored.imagePath, equals(original.imagePath));
       expect(restored.rawText, equals(original.rawText));
     });

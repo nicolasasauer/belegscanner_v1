@@ -225,7 +225,8 @@ class DatabaseService {
     const defaults = [
       {
         'name': 'Lebensmittel',
-        'keywords': 'Bio,Tofu,Milch,Brot,Obst,Gemüse,Fruchtaufstr',
+        'keywords':
+            'Bio,Tofu,Milch,Brot,Obst,Gemüse,Fruchtaufstr,Alpro,Sbudget,Gnocchi',
         'color': '#4CAF50',
       },
       {
@@ -235,7 +236,7 @@ class DatabaseService {
       },
       {
         'name': 'Getränke',
-        'keywords': 'Red Bull,Cola,Wasser,Saft,Wein,Bier',
+        'keywords': 'Red Bull,Cola,Wasser,Saft,Wein,Bier,Coke',
         'color': '#FF9800',
       },
       {

@@ -14,6 +14,19 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// AGP 8+ requires a namespace declaration in every library module's build.gradle.
+// Older Flutter plugins (e.g. image_gallery_saver) don't declare one, so we
+// inject the plugin's group ID as its namespace after evaluation.
+subprojects {
+    afterEvaluate { project ->
+        if (project.plugins.hasPlugin('com.android.library')) {
+            if (project.android.namespace == null) {
+                project.android.namespace = project.group
+            }
+        }
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }

@@ -29,7 +29,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.nicolas.bong_scanner"
-    compileSdk 35
+    compileSdk 34
     ndkVersion "25.1.8937393"
 
     compileOptions {
@@ -45,7 +45,7 @@ android {
         applicationId "com.nicolas.bong_scanner"
         // Mindest-SDK für ML Kit ist 21
         minSdk 21
-        targetSdk 35
+        targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         // Nur 64-Bit arm64 laden; verhindert inkompatible 32-Bit-Bibliotheken auf S23

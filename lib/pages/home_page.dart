@@ -424,6 +424,106 @@ class _HomePageState extends State<HomePage> {
     return cleaned;
   }
 
+  // ---------------------------------------------------------------------------
+  // Export / Sharing
+  // ---------------------------------------------------------------------------
+
+  /// Generiert einen sprechenden Dateinamen für den Export des Belegbilds.
+  ///
+  /// Format: `YYYY-MM-DD_Händler_Betrag.jpg`
+  /// Beispiel: `2026-03-23_Spar_10.76.jpg`
+  String _getExportFileName(Receipt receipt) {
+    final dateStr = DateFormat('yyyy-MM-dd').format(receipt.date);
+    final rawMerchant = receipt.items.isNotEmpty
+        ? parseLineItem(receipt.items.first).name
+        : 'Unbekannt';
+    // Verbotene Zeichen und Leerzeichen aus dem Händlernamen entfernen
+    final sanitizedMerchant =
+        rawMerchant.replaceAll(RegExp(r'[ /\\:*?"<>|]'), '');
+    final merchant =
+        sanitizedMerchant.isNotEmpty ? sanitizedMerchant : 'Unbekannt';
+    final totalStr =
+        receipt.totalAmount.toStringAsFixed(2).replaceAll(',', '.');
+    return '${dateStr}_${merchant}_$totalStr.jpg';
+  }
+
+  /// Erstellt eine temporäre Kopie des Belegbilds mit dem Export-Dateinamen
+  /// und öffnet das native Share-Sheet.
+  Future<void> _shareReceipt(Receipt receipt) async {
+    final imagePath = receipt.imagePath;
+    if (imagePath == null) return;
+
+    try {
+      final fileName = _getExportFileName(receipt);
+      final tempDir = await getTemporaryDirectory();
+      final tempPath = p.join(tempDir.path, fileName);
+      await File(imagePath).copy(tempPath);
+
+      await Share.shareXFiles([XFile(tempPath)]);
+
+      // Temporäre Datei nach dem Teilen aufräumen
+      final tempFile = File(tempPath);
+      if (await tempFile.exists()) await tempFile.delete();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Teilen fehlgeschlagen. Bitte erneut versuchen.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Speichert das Belegbild mit dem Export-Dateinamen in der Gerätegalerie.
+  Future<void> _saveToGallery(Receipt receipt) async {
+    final imagePath = receipt.imagePath;
+    if (imagePath == null) return;
+
+    try {
+      final fileName = _getExportFileName(receipt);
+      final tempDir = await getTemporaryDirectory();
+      final tempPath = p.join(tempDir.path, fileName);
+      await File(imagePath).copy(tempPath);
+
+      final result = await ImageGallerySaver.saveFile(tempPath);
+
+      // Temporäre Datei nach dem Speichern aufräumen
+      final tempFile = File(tempPath);
+      if (await tempFile.exists()) await tempFile.delete();
+
+      final success = result is Map && result['isSuccess'] == true;
+      if (mounted) {
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Als $fileName in Galerie gespeichert')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Speichern in Galerie fehlgeschlagen. Bitte erneut versuchen.',
+              ),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Speichern in Galerie fehlgeschlagen. Bitte erneut versuchen.',
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
   /// Zeigt die Detail-Ansicht eines Belegs in einem BottomSheet.
   void _showReceiptDetails(Receipt receipt) {
     showModalBottomSheet(
@@ -450,6 +550,8 @@ class _HomePageState extends State<HomePage> {
               if (idx != -1) _receipts[idx] = updatedReceipt;
             });
           },
+          onShare: _shareReceipt,
+          onSaveToGallery: _saveToGallery,
         ),
       ),
     );
@@ -1070,6 +1172,8 @@ class _ReceiptDetailSheet extends StatefulWidget {
     required this.currencyFormat,
     required this.databaseService,
     required this.onSaved,
+    this.onShare,
+    this.onSaveToGallery,
   });
 
   final Receipt receipt;
@@ -1077,6 +1181,8 @@ class _ReceiptDetailSheet extends StatefulWidget {
   final NumberFormat currencyFormat;
   final DatabaseService databaseService;
   final ValueChanged<Receipt> onSaved;
+  final ValueChanged<Receipt>? onShare;
+  final ValueChanged<Receipt>? onSaveToGallery;
 
   @override
   State<_ReceiptDetailSheet> createState() => _ReceiptDetailSheetState();
@@ -1257,104 +1363,8 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   }
 
   // ---------------------------------------------------------------------------
-  // Export / Sharing
+  // Build
   // ---------------------------------------------------------------------------
-
-  /// Generiert einen sprechenden Dateinamen für den Export des Belegbilds.
-  ///
-  /// Format: `YYYY-MM-DD_Händler_Betrag.jpg`
-  /// Beispiel: `2026-03-23_Spar_10.76.jpg`
-  String _generateExportFileName(Receipt receipt) {
-    final dateStr = DateFormat('yyyy-MM-dd').format(receipt.date);
-    final rawMerchant = receipt.items.isNotEmpty
-        ? parseLineItem(receipt.items.first).name
-        : 'Unbekannt';
-    // Leerzeichen und Sonderzeichen entfernen, die in Dateinamen nicht erlaubt sind
-    final sanitizedMerchant =
-        rawMerchant.replaceAll(RegExp(r'[ /\\:*?"<>|]'), '');
-    final merchant = sanitizedMerchant.isNotEmpty ? sanitizedMerchant : 'Unbekannt';
-    final totalStr =
-        receipt.totalAmount.toStringAsFixed(2).replaceAll(',', '.');
-    return '${dateStr}_${merchant}_$totalStr.jpg';
-  }
-
-  /// Erstellt eine temporäre Kopie des Belegbilds mit dem Export-Dateinamen
-  /// und öffnet das native Share-Sheet.
-  Future<void> _shareImage() async {
-    final imagePath = widget.receipt.imagePath;
-    if (imagePath == null) return;
-
-    try {
-      final fileName = _generateExportFileName(widget.receipt);
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = p.join(tempDir.path, fileName);
-      await File(imagePath).copy(tempPath);
-
-      if (!mounted) return;
-      await Share.shareXFiles([XFile(tempPath)]);
-
-      // Temporäre Datei nach dem Teilen aufräumen
-      final tempFile = File(tempPath);
-      if (await tempFile.exists()) await tempFile.delete();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Teilen fehlgeschlagen. Bitte erneut versuchen.'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-  /// Speichert das Belegbild mit dem Export-Dateinamen in der Gerätegalerie.
-  Future<void> _saveToGallery() async {
-    final imagePath = widget.receipt.imagePath;
-    if (imagePath == null) return;
-
-    try {
-      final fileName = _generateExportFileName(widget.receipt);
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = p.join(tempDir.path, fileName);
-      await File(imagePath).copy(tempPath);
-
-      final result = await ImageGallerySaver.saveFile(tempPath);
-
-      // Temporäre Datei nach dem Speichern aufräumen
-      final tempFile = File(tempPath);
-      if (await tempFile.exists()) await tempFile.delete();
-
-      final success = result is Map && result['isSuccess'] == true;
-      if (mounted) {
-        if (success) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Als $fileName in Galerie gespeichert')),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Speichern in Galerie fehlgeschlagen. Bitte erneut versuchen.',
-              ),
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Speichern in Galerie fehlgeschlagen. Bitte erneut versuchen.',
-            ),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {

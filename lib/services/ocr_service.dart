@@ -102,7 +102,7 @@ List<String> parseItemsImpl(String text) {
     r'GmbH|OHG|e\.K\.|'
     r'(?:^|\s)(?:AG|KG|eG)(?:\s|$)|e\.V\.|'
     // Adresse / Postleitzahl / Straße
-    r'\b\d{5}\b|Str\.|Stra[ßs]e|Gasse|Platz|Marktgraben|'
+    r'\b\d{5}\b|\bStr\.|Stra[ßs]e|Gasse|Platz|Marktgraben|'
     // Telefon / Fax / Internet
     r'Tel\.?:?\s*[\d\s\-/()]{5,}|Telefon|Fax|'
     r'www\.\S+|https?://|'

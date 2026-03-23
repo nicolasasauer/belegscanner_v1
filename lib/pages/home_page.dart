@@ -3,7 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:gal/gal.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -1319,16 +1319,28 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
       final tempPath = p.join(tempDir.path, fileName);
       await File(imagePath).copy(tempPath);
 
-      await Gal.putImage(tempPath);
+      final result = await ImageGallerySaver.saveFile(tempPath);
 
       // Temporäre Datei nach dem Speichern aufräumen
       final tempFile = File(tempPath);
       if (await tempFile.exists()) await tempFile.delete();
 
+      final success = result is Map && result['isSuccess'] == true;
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Als $fileName in Galerie gespeichert')),
-        );
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Als $fileName in Galerie gespeichert')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Speichern in Galerie fehlgeschlagen. Bitte erneut versuchen.',
+              ),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {

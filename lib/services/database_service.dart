@@ -13,7 +13,7 @@ import '../models/receipt.dart';
 class DatabaseService {
   static const _dbName = 'belegscanner.db';
   static const _tableName = 'receipts';
-  static const _dbVersion = 2;
+  static const _dbVersion = 3;
 
   Database? _db;
 
@@ -38,6 +38,7 @@ class DatabaseService {
             date TEXT NOT NULL,
             totalAmount REAL NOT NULL,
             items TEXT NOT NULL,
+            categories TEXT NOT NULL DEFAULT '[]',
             imagePath TEXT
           )
         ''');
@@ -47,23 +48,30 @@ class DatabaseService {
           // Version 1 hatte imagePath TEXT NOT NULL.
           // SQLite unterstützt kein direktes ALTER COLUMN,
           // daher Tabelle neu erstellen und Daten übertragen.
+          // Die neue Tabelle enthält bereits die categories-Spalte (v3).
           await db.execute('''
             CREATE TABLE ${_tableName}_new (
               id TEXT PRIMARY KEY,
               date TEXT NOT NULL,
               totalAmount REAL NOT NULL,
               items TEXT NOT NULL,
+              categories TEXT NOT NULL DEFAULT '[]',
               imagePath TEXT
             )
           ''');
           await db.execute('''
             INSERT INTO ${_tableName}_new
-              SELECT id, date, totalAmount, items, imagePath
+              SELECT id, date, totalAmount, items, '[]', imagePath
               FROM $_tableName
           ''');
           await db.execute('DROP TABLE $_tableName');
           await db.execute(
             'ALTER TABLE ${_tableName}_new RENAME TO $_tableName',
+          );
+        } else if (oldVersion < 3) {
+          // Version 2 → Version 3: Kategorien-Spalte hinzufügen.
+          await db.execute(
+            "ALTER TABLE $_tableName ADD COLUMN categories TEXT NOT NULL DEFAULT '[]'",
           );
         }
       },

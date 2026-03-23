@@ -148,24 +148,61 @@ class _HomePageState extends State<HomePage> {
     }).toList();
   }
 
-  /// Eindeutige Tage, für die Belege vorhanden sind.
-  List<int> get _availableDays {
-    return _receipts.map((r) => r.date.day).toSet().toList()..sort();
-  }
-
-  /// Eindeutige Monate, für die Belege vorhanden sind.
-  List<int> get _availableMonths {
-    return _receipts.map((r) => r.date.month).toSet().toList()..sort();
-  }
-
-  /// Eindeutige Jahre, für die Belege vorhanden sind.
-  List<int> get _availableYears {
-    return _receipts.map((r) => r.date.year).toSet().toList()..sort();
-  }
-
   // ---------------------------------------------------------------------------
   // Aktionen
   // ---------------------------------------------------------------------------
+
+  /// Öffnet den Datumswähler und setzt Tag-/Monat-/Jahres-Filter auf das
+  /// gewählte Datum (alle drei Felder werden gleichzeitig gesetzt).
+  Future<void> _pickDay() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDay = picked.day;
+        _selectedMonth = picked.month;
+        _selectedYear = picked.year;
+      });
+    }
+  }
+
+  /// Öffnet den Datumswähler und setzt den Monats-/Jahres-Filter.
+  Future<void> _pickMonth() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDay = null;
+        _selectedMonth = picked.month;
+        _selectedYear = picked.year;
+      });
+    }
+  }
+
+  /// Öffnet den Datumswähler und setzt ausschließlich den Jahres-Filter.
+  Future<void> _pickYear() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDay = null;
+        _selectedMonth = null;
+        _selectedYear = picked.year;
+      });
+    }
+  }
 
   /// Startet den Scan-Vorgang:
   /// 1. Kamera öffnen → Foto aufnehmen
@@ -482,15 +519,14 @@ class _HomePageState extends State<HomePage> {
           // Filter-Bar
           // ------------------------------------------------------------------
           _FilterBar(
-            availableDays: _availableDays,
-            availableMonths: _availableMonths,
-            availableYears: _availableYears,
+            hasReceipts: _receipts.isNotEmpty,
             selectedDay: _selectedDay,
             selectedMonth: _selectedMonth,
             selectedYear: _selectedYear,
-            onDayChanged: (v) => setState(() => _selectedDay = v),
-            onMonthChanged: (v) => setState(() => _selectedMonth = v),
-            onYearChanged: (v) => setState(() => _selectedYear = v),
+            onPickDay: _pickDay,
+            onPickMonth: _pickMonth,
+            onPickYear: _pickYear,
+            onClearAll: _clearFilters,
           ),
 
           // ------------------------------------------------------------------
@@ -746,38 +782,40 @@ class _FabMenuItem extends StatelessWidget {
 // Filter-Bar Widget
 // =============================================================================
 
-/// Filter-Leiste mit FilterChips für Tag, Monat und Jahr.
+/// Filter-Leiste mit interaktiven Datums-Auswahlbuttons.
+///
+/// Die Buttons öffnen jeweils einen [showDatePicker], mit dem ein beliebiges
+/// Datum ausgewählt werden kann. „Tag" filtert auf exakten Tag/Monat/Jahr,
+/// „Monat" auf Monat/Jahr, „Jahr" nur auf das Jahr. Ein „Alle anzeigen"-
+/// Button setzt alle aktiven Filter zurück.
 class _FilterBar extends StatelessWidget {
   const _FilterBar({
-    required this.availableDays,
-    required this.availableMonths,
-    required this.availableYears,
+    required this.hasReceipts,
     required this.selectedDay,
     required this.selectedMonth,
     required this.selectedYear,
-    required this.onDayChanged,
-    required this.onMonthChanged,
-    required this.onYearChanged,
+    required this.onPickDay,
+    required this.onPickMonth,
+    required this.onPickYear,
+    required this.onClearAll,
   });
 
-  final List<int> availableDays;
-  final List<int> availableMonths;
-  final List<int> availableYears;
+  final bool hasReceipts;
   final int? selectedDay;
   final int? selectedMonth;
   final int? selectedYear;
-  final ValueChanged<int?> onDayChanged;
-  final ValueChanged<int?> onMonthChanged;
-  final ValueChanged<int?> onYearChanged;
+  final VoidCallback onPickDay;
+  final VoidCallback onPickMonth;
+  final VoidCallback onPickYear;
+  final VoidCallback onClearAll;
 
   @override
   Widget build(BuildContext context) {
-    // Filter-Leiste ausblenden, wenn noch keine Belege vorhanden sind
-    if (availableDays.isEmpty &&
-        availableMonths.isEmpty &&
-        availableYears.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    final hasFilter =
+        selectedDay != null || selectedMonth != null || selectedYear != null;
+
+    // Filter-Leiste ausblenden, wenn keine Belege vorhanden und kein Filter aktiv
+    if (!hasReceipts && !hasFilter) return const SizedBox.shrink();
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -787,42 +825,47 @@ class _FilterBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
             children: [
-              // Tag-FilterChips
-              if (availableDays.isNotEmpty) ...[
-                _ChipGroupLabel(label: 'Tag'),
-                ...availableDays.map(
-                  (d) => _buildChip(
-                    context: context,
-                    label: d.toString().padLeft(2, '0'),
-                    isSelected: selectedDay == d,
-                    onSelected: (sel) => onDayChanged(sel ? d : null),
-                  ),
-                ),
+              // Tag-Button
+              _buildDateChip(
+                context: context,
+                label: selectedDay != null
+                    ? 'Tag: ${selectedDay.toString().padLeft(2, '0')}.'
+                        '${selectedMonth.toString().padLeft(2, '0')}.'
+                        '$selectedYear'
+                    : 'Tag',
+                isSelected: selectedDay != null,
+                onTap: onPickDay,
+              ),
+              const SizedBox(width: 8),
+              // Monat-Button
+              _buildDateChip(
+                context: context,
+                label: selectedMonth != null && selectedDay == null
+                    ? 'Monat: ${_monthName(selectedMonth!)} $selectedYear'
+                    : 'Monat',
+                isSelected: selectedMonth != null && selectedDay == null,
+                onTap: onPickMonth,
+              ),
+              const SizedBox(width: 8),
+              // Jahr-Button
+              _buildDateChip(
+                context: context,
+                label:
+                    selectedYear != null && selectedMonth == null && selectedDay == null
+                        ? 'Jahr: $selectedYear'
+                        : 'Jahr',
+                isSelected:
+                    selectedYear != null && selectedMonth == null && selectedDay == null,
+                onTap: onPickYear,
+              ),
+              // „Alle anzeigen"-Button (nur wenn Filter aktiv)
+              if (hasFilter) ...[
                 const SizedBox(width: 12),
-              ],
-              // Monat-FilterChips
-              if (availableMonths.isNotEmpty) ...[
-                _ChipGroupLabel(label: 'Monat'),
-                ...availableMonths.map(
-                  (m) => _buildChip(
-                    context: context,
-                    label: _monthName(m),
-                    isSelected: selectedMonth == m,
-                    onSelected: (sel) => onMonthChanged(sel ? m : null),
-                  ),
-                ),
-                const SizedBox(width: 12),
-              ],
-              // Jahr-FilterChips
-              if (availableYears.isNotEmpty) ...[
-                _ChipGroupLabel(label: 'Jahr'),
-                ...availableYears.map(
-                  (y) => _buildChip(
-                    context: context,
-                    label: y.toString(),
-                    isSelected: selectedYear == y,
-                    onSelected: (sel) => onYearChanged(sel ? y : null),
-                  ),
+                ActionChip(
+                  avatar: const Icon(Icons.clear, size: 16),
+                  label: const Text('Alle anzeigen'),
+                  onPressed: onClearAll,
+                  visualDensity: VisualDensity.compact,
                 ),
               ],
             ],
@@ -833,51 +876,28 @@ class _FilterBar extends StatelessWidget {
     );
   }
 
-  Widget _buildChip({
+  Widget _buildDateChip({
     required BuildContext context,
     required String label,
     required bool isSelected,
-    required ValueChanged<bool> onSelected,
+    required VoidCallback onTap,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: FilterChip(
-        label: Text(label),
-        selected: isSelected,
-        onSelected: onSelected,
-        visualDensity: VisualDensity.compact,
-      ),
+    return FilterChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) => onTap(),
+      avatar: isSelected ? null : const Icon(Icons.calendar_today, size: 14),
+      visualDensity: VisualDensity.compact,
     );
   }
 
   /// Gibt den deutschen Monatsnamen für einen Monatswert (1–12) zurück.
   String _monthName(int month) {
     const names = [
-      'Jan', 'Feb', 'M\u00E4r', 'Apr', 'Mai', 'Jun',
+      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
       'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
     ];
     return names[month - 1];
-  }
-}
-
-/// Kleines Beschriftungs-Widget für eine Chip-Gruppe in der Filter-Leiste.
-class _ChipGroupLabel extends StatelessWidget {
-  const _ChipGroupLabel({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
-      ),
-    );
   }
 }
 
@@ -1006,6 +1026,10 @@ class _ReceiptDetailSheet extends StatefulWidget {
 class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   late List<TextEditingController> _nameControllers;
   late List<TextEditingController> _priceControllers;
+
+  /// Kategorien der Einzelposten (parallele Liste zu den Controllern).
+  late List<String> _categories;
+
   bool _isSaving = false;
 
   /// Gibt an, ob die Detailansicht im Bearbeitungs-Modus ist.
@@ -1037,14 +1061,16 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   void _initControllers(List<String> items) {
     _nameControllers = [];
     _priceControllers = [];
-    for (final item in items) {
-      final (:name, :price) = parseLineItem(item);
+    _categories = [];
+    for (var i = 0; i < items.length; i++) {
+      final (:name, :price) = parseLineItem(items[i]);
       _nameControllers.add(TextEditingController(text: name));
       final priceCtrl = TextEditingController(
         text: price != null ? _deDecimalFormat.format(price) : '',
       );
       priceCtrl.addListener(_onPriceChanged);
       _priceControllers.add(priceCtrl);
+      _categories.add(widget.receipt.categoryAt(i));
     }
   }
 
@@ -1085,6 +1111,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     setState(() {
       _nameControllers.add(TextEditingController());
       _priceControllers.add(priceCtrl);
+      _categories.add('Sonstiges');
     });
   }
 
@@ -1100,6 +1127,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     setState(() {
       _nameControllers.removeAt(index);
       _priceControllers.removeAt(index);
+      if (index < _categories.length) _categories.removeAt(index);
     });
   }
 
@@ -1112,15 +1140,20 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     setState(() => _isSaving = true);
     try {
       final newItems = <String>[];
+      final newCategories = <String>[];
       for (var i = 0; i < _nameControllers.length; i++) {
         final name = _nameControllers[i].text.trim();
         if (name.isEmpty) continue;
         final priceText = _priceControllers[i].text.trim();
         newItems.add(priceText.isNotEmpty ? '$name  $priceText' : name);
+        newCategories.add(
+          i < _categories.length ? _categories[i] : 'Sonstiges',
+        );
       }
 
       final updatedReceipt = widget.receipt.copyWith(
         items: newItems,
+        categories: newCategories,
         totalAmount: _editedTotalAmount,
       );
       await widget.databaseService.insertReceipt(updatedReceipt);
@@ -1281,7 +1314,13 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Text(
-                          'Keine Positionen erkannt.',
+                          widget.receipt.totalAmount > 0
+                              ? 'Keine Einzelpreise erkannt.\n'
+                                  'Tippe auf Bearbeiten, um Artikel '
+                                  'manuell hinzuzufügen.'
+                              : 'Kein Text erkannt. Bitte Beleg '
+                                  'erneut scannen.',
+                          textAlign: TextAlign.center,
                           style: Theme.of(
                             context,
                           ).textTheme.bodyMedium?.copyWith(
@@ -1374,48 +1413,94 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     );
   }
 
-  /// Editierbare Zeile für einen Artikel (Name + Preis + Löschen-Button).
+  /// Editierbare Zeile für einen Artikel (Name + Preis + Löschen-Button + Kategorie).
   Widget _buildEditItemRow(BuildContext context, int index) {
+    final category =
+        index < _categories.length ? _categories[index] : 'Sonstiges';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Artikelname
-          Expanded(
-            flex: 3,
-            child: TextField(
-              controller: _nameControllers[index],
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Artikel',
-                isDense: true,
-                border: OutlineInputBorder(),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Artikelname
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  controller: _nameControllers[index],
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Artikel',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Preis
-          SizedBox(
-            width: 90,
-            child: TextField(
-              controller: _priceControllers[index],
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Preis',
-                isDense: true,
-                border: OutlineInputBorder(),
-                suffixText: '€',
+              const SizedBox(width: 8),
+              // Preis
+              SizedBox(
+                width: 90,
+                child: TextField(
+                  controller: _priceControllers[index],
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Preis',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    suffixText: '€',
+                  ),
+                ),
               ),
-            ),
+              // Löschen-Button
+              IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Position entfernen',
+                color: Theme.of(context).colorScheme.error,
+                onPressed: () => _deleteItem(index),
+              ),
+            ],
           ),
-          // Löschen-Button
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Position entfernen',
-            color: Theme.of(context).colorScheme.error,
-            onPressed: () => _deleteItem(index),
+          const SizedBox(height: 4),
+          // Kategorie-Auswahl
+          Row(
+            children: [
+              Icon(
+                Icons.label_outline,
+                size: 16,
+                color: Theme.of(context).colorScheme.secondary,
+              ),
+              const SizedBox(width: 4),
+              DropdownButton<String>(
+                value: category,
+                isDense: true,
+                underline: const SizedBox.shrink(),
+                style: Theme.of(context).textTheme.bodySmall,
+                items: const [
+                  'Lebensmittel',
+                  'Drogerie',
+                  'Freizeit',
+                  'Transport',
+                  'Sonstiges',
+                ]
+                    .map(
+                      (c) => DropdownMenuItem(value: c, child: Text(c)),
+                    )
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() {
+                      while (_categories.length <= index) {
+                        _categories.add('Sonstiges');
+                      }
+                      _categories[index] = val;
+                    });
+                  }
+                },
+              ),
+            ],
           ),
         ],
       ),

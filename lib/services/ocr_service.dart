@@ -13,6 +13,10 @@ import '../models/receipt.dart';
 // Top-level Parsing-Funktionen (erforderlich für compute-Isolate)
 // ---------------------------------------------------------------------------
 
+/// Fallback-Name für Artikel, bei denen kein Name aus dem OCR-Text
+/// ermittelt werden kann (Preis-Anker-Logik).
+const String kUnknownItemName = 'Unbekannter Artikel';
+
 /// Compiled Regex: Preis am Ende einer OCR-Einzelposten-Zeile.
 ///
 /// Erkennt z. B. "BROT 750G  2,99", "MILCH 1L 1,49 A" oder
@@ -123,8 +127,8 @@ double parseAmountImpl(String text) {
   return maxAmount;
 }
 
-/// Zerlegt den OCR-Text in Einzelzeilen, bereinigt OCR-Artefakte und
-/// filtert Header-Daten, Zahlungszeilen, Summenzeilen sowie Junk-Text heraus.
+/// Zerlegt den OCR-Text in Einzelzeilen und extrahiert Artikel per
+/// Preis-Anker-Logik (Price-First).
 ///
 /// Algorithmus (ladenunabhängig / generisch):
 ///   1. Header-Cut: Alle Zeilen vor dem ersten Datum (TT.MM.JJJJ) oder der
@@ -137,20 +141,20 @@ double parseAmountImpl(String text) {
 ///      aufeinanderfolgenden Ziffern (Terminal-IDs/IBANs), Zeilen aus
 ///      ausschließlich Sonderzeichen (z. B. "------") sowie Zeilen mit
 ///      URLs oder E-Mail-Adressen.
-///   4. Generischer Metadaten-Filter: Zeilen mit MwSt-Angaben, Zahlungs-
-///      mitteln (Visa, Bar, Zahlung) und Kundenbindungs-Programmen werden
-///      gefiltert, da sie trotz Preis-Muster keine Artikel sind.
-///   5. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio") werden
+///   4. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio") werden
 ///      gestripped, sodass der Artikelname erhalten bleibt.
-///   6. Artikel-Paare aus [NAME] und [PREIS] werden erkannt:
+///   5. Preis-Anker-Erkennung: Jede Zeile, die einen Betrag enthält, wird als
+///      Artikel gewertet (Preis-First-Logik):
 ///      - Zeilen mit Text + Preis am Ende → direkt als Artikel übernommen.
-///      - Reine Text-Zeilen gefolgt von einer reinen Preis-Zeile →
-///        zusammengeführt (OCR-Split).
 ///      - Reine Text-Zeilen gefolgt von einer Mengenberechnung
 ///        (z. B. "4 X 1,59") und dann einer Preis-Zeile →
 ///        zusammengeführt (Multi-Line-Artikel).
-///      - Standalone-Preis-Zeilen, Mengenberechnungs-Zeilen und reine
-///        Zahlen werden ignoriert.
+///      - Reine Text-Zeilen gefolgt von einer reinen Preis-Zeile →
+///        zusammengeführt (OCR-Split).
+///      - Standalone-Preis-Zeilen ohne vorherigen Namenstext erhalten den
+///        Fallback-Namen „Unbekannter Artikel".
+///      - Mengenberechnungs-Zeilen (z. B. "4 X 1,59") und reine
+///        Zahlen ohne Dezimaltrenner werden ignoriert.
 ///
 /// Jeder erkannte Treffer wird per [debugPrint] mit
 /// `[OCR-Match] Found: Name=… Price=…` protokolliert.
@@ -189,33 +193,11 @@ List<String> parseItemsImpl(String text) {
     caseSensitive: false,
   );
 
-  // ─── 3. Generischer Metadaten-Filter ─────────────────────────────────────
-  // Zeilen, die trotz Preis-Muster KEINE Artikel sind (universell für
-  // deutschsprachige Kassenbons).
-  final RegExp metaPattern = RegExp(
-    // Steuer / MwSt
-    r'\bMwSt\b|\bMWSt\b|\bUmSt\b|\bMehrwertsteuer\b|\bSteuer\b|'
-    r'\bNetto\b|\bBrutto\b|'
-    // Zahlungsmittel
-    r'\bZahlung\b|\bBargeld\b|\bBar\b|\bGegeben\b|'
-    r'\bRückgeld\b|\bWechselgeld\b|'
-    r'\bVisa\b|\bMastercard\b|\bMaestro\b|\bEC-Karte\b|\bKartenzahlung\b|'
-    r'\bDEBIT\b|\bCREDIT\b|'
-    // Terminal-Daten
-    r'\bAcq-?Id\b|\bTrm-?Id\b|\bAID\b|\bVerarbeitung\s+OK\b|'
-    r'\bKundenbeleg\b|\bcontactless\b|\bPAN\b|\bTrack2?\b|'
-    // Kundenbindung
-    r'\bPayback\b|\bBonus\b|\bPunkte\b|\bCoupon\b|\bGutschein\b|'
-    // Kasseninfo
-    r'\bKassennummer\b|\bBonnummer\b|\bKassenbon\b|\bBon-Nr\b|\bKassen-ID\b',
-    caseSensitive: false,
-  );
-
-  // ─── 4. OCR-Artefakt-Bereinigung ─────────────────────────────────────────
+  // ─── 3. OCR-Artefakt-Bereinigung ─────────────────────────────────────────
   // Bekannte OCR-Junk-Präfixe (z. B. 'CnBio', 'unBio', 'dnBio').
   final RegExp junkPrefixPattern = RegExp(r'^[A-Za-z]nBio\s+');
 
-  // ─── 5. Artikel-Erkennungs-Muster ────────────────────────────────────────
+  // ─── 4. Artikel-Erkennungs-Muster ────────────────────────────────────────
 
   // Preis-Only: die ganze Zeile ist nur ein Preis (z. B. "1,65", "2.99 A")
   final RegExp priceOnlyPattern = RegExp(
@@ -264,28 +246,21 @@ List<String> parseItemsImpl(String text) {
     }
   }
 
-  // ─── Schritt 4: Müll und Metadaten filtern, OCR-Artefakte bereinigen ─────
+  // ─── Schritt 4: Müll filtern, OCR-Artefakte bereinigen ───────────────────
   final lines = allLines
       .sublist(startIndex, endIndex)
       .where((l) => !manyDigitsPattern.hasMatch(l))
       .where((l) => !specialCharsOnlyPattern.hasMatch(l))
       .where((l) => !urlEmailPattern.hasMatch(l))
-      .where((l) => !metaPattern.hasMatch(l))
       .map((l) => l.replaceFirst(junkPrefixPattern, '').trim())
       .where((l) => l.isNotEmpty)
       .toList();
 
-  // ─── Schritt 5: Artikel-Paare erkennen und zusammenführen ────────────────
+  // ─── Schritt 5: Artikel per Preis-Anker erkennen (Price-First) ───────────
   final result = <String>[];
   var i = 0;
   while (i < lines.length) {
     final line = lines[i];
-
-    // Standalone-Preis-Zeile (kein Namenstext davor in dieser Iteration)
-    if (priceOnlyPattern.hasMatch(line)) {
-      i++;
-      continue;
-    }
 
     // Mengenberechnungs-Zeile (z. B. "4 X 1,59") ohne vorherigen
     // Artikel-Kontext → überspringen, damit "4 X" nicht als Name landet.
@@ -333,6 +308,17 @@ List<String> parseItemsImpl(String text) {
         i += 2;
         continue;
       }
+    }
+
+    // Standalone-Preis-Zeile (kein Namenstext in dieser Iteration):
+    // Preis-First-Logik: Preis wird als Artikel mit Fallback-Name gewertet.
+    if (priceOnlyPattern.hasMatch(line)) {
+      final merged = '$kUnknownItemName  ${line.trim()}';
+      result.add(merged);
+      final (:name, :price) = parseLineItem(merged);
+      debugPrint('[OCR-Match] Found (fallback): Name=$name, Price=${price ?? "–"}');
+      i++;
+      continue;
     }
 
     // Text-Zeile ohne zugehörigen Preis → ignorieren

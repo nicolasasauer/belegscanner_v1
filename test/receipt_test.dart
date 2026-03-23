@@ -21,6 +21,7 @@ void main() {
       expect(receipt.totalAmount, equals(42.50));
       expect(receipt.items.length, equals(2));
       expect(receipt.imagePath, equals('/tmp/test_receipt.jpg'));
+      expect(receipt.rawText, isNull);
     });
 
     test('Erstellt ein Receipt ohne imagePath (null)', () {
@@ -32,6 +33,20 @@ void main() {
       );
 
       expect(receipt.imagePath, isNull);
+      expect(receipt.rawText, isNull);
+    });
+
+    test('Erstellt ein Receipt mit rawText', () {
+      final receipt = Receipt(
+        id: 'raw-text-test',
+        date: DateTime(2026, 3, 22),
+        totalAmount: 5.00,
+        items: ['Milch 1,29'],
+        rawText: 'dm Bio\n22.03.2026 10:30\nMilch 1,29 A\nSUMME 5,00',
+      );
+
+      expect(receipt.rawText, isNotNull);
+      expect(receipt.rawText, contains('SUMME 5,00'));
     });
 
     test('copyWith übernimmt alle unveränderten Felder', () {
@@ -99,6 +114,7 @@ void main() {
         totalAmount: 14.95,
         items: ['Brot 2,49', 'Milch 1,29'],
         imagePath: '/tmp/scan.jpg',
+        rawText: 'Bäckerei\n22.03.2026\nBrot 2,49\nSUMME 14,95',
       );
 
       final map = receipt.toMap();
@@ -108,6 +124,17 @@ void main() {
       expect(map['totalAmount'], equals(14.95));
       expect(map['items'], equals('["Brot 2,49","Milch 1,29"]'));
       expect(map['imagePath'], equals('/tmp/scan.jpg'));
+      expect(map['rawText'], equals('Bäckerei\n22.03.2026\nBrot 2,49\nSUMME 14,95'));
+    });
+
+    test('toMap hat rawText als null wenn nicht gesetzt', () {
+      final receipt = Receipt(
+        id: 'no-raw',
+        date: DateTime(2026, 1, 1),
+        totalAmount: 1.0,
+        items: [],
+      );
+      expect(receipt.toMap()['rawText'], isNull);
     });
 
     test('fromMap erstellt einen korrekten Receipt', () {
@@ -117,6 +144,7 @@ void main() {
         'totalAmount': 9.99,
         'items': '["Käse","Butter"]',
         'imagePath': '/tmp/img.jpg',
+        'rawText': 'Supermarkt\n22.03.2026\nKäse 5,99\nButter 3,99\nSUMME 9,99',
       };
 
       final receipt = Receipt.fromMap(map);
@@ -126,6 +154,20 @@ void main() {
       expect(receipt.totalAmount, equals(9.99));
       expect(receipt.items, equals(['Käse', 'Butter']));
       expect(receipt.imagePath, equals('/tmp/img.jpg'));
+      expect(receipt.rawText, contains('SUMME 9,99'));
+    });
+
+    test('fromMap mit null rawText (Altdaten ohne OCR-Rohtext)', () {
+      final map = {
+        'id': 'legacy',
+        'date': '2026-01-01T00:00:00.000',
+        'totalAmount': 5.0,
+        'items': '[]',
+        'imagePath': null,
+        'rawText': null,
+      };
+      final receipt = Receipt.fromMap(map);
+      expect(receipt.rawText, isNull);
     });
 
     test('toMap und fromMap sind inverse Operationen (Roundtrip)', () {
@@ -135,6 +177,7 @@ void main() {
         totalAmount: 23.45,
         items: ['Artikel A', 'Artikel B', 'Artikel C'],
         imagePath: '/tmp/roundtrip.jpg',
+        rawText: 'Shop\n01.05.2026 12:00\nArtikel A 10,00\nSUMME 23,45',
       );
 
       final restored = Receipt.fromMap(original.toMap());
@@ -144,6 +187,7 @@ void main() {
       expect(restored.totalAmount, equals(original.totalAmount));
       expect(restored.items, equals(original.items));
       expect(restored.imagePath, equals(original.imagePath));
+      expect(restored.rawText, equals(original.rawText));
     });
 
     test('fromMap mit leerer Artikel-Liste', () {

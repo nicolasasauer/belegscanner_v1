@@ -417,6 +417,7 @@ class OcrService {
       totalAmount: result['amount'] as double,
       items: List<String>.from(result['items'] as List),
       imagePath: permanentImagePath,
+      rawText: fullText.isEmpty ? null : fullText,
     );
   }
 

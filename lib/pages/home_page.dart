@@ -980,28 +980,6 @@ class _ReceiptListTile extends StatelessWidget {
 }
 
 // =============================================================================
-// Hilfsfunktionen für Einzelposten-Preiserkennung
-// =============================================================================
-
-/// Compiled Regex: Preis am Ende einer OCR-Einzelposten-Zeile.
-///
-/// Erkennt z. B. "BROT 750G  2,99", "MILCH 1L 1,49 A" oder
-/// "dmBio Tofu Rosso 200g 1,65 2" (Tax-Code am Ende ist Buchstabe oder Ziffer).
-final _lineItemPriceRegex = RegExp(r'\s+(\d{1,4}[.,]\d{2})\s*[A-Za-z0-9]?\s*$');
-
-/// Parst eine OCR-Zeile in einen Artikelnamen und einen optionalen Preis.
-///
-/// Gibt einen Named-Record `(name, price)` zurück. Wenn kein Preis erkannt
-/// wird, enthält [name] die ursprüngliche [line] und [price] ist `null`.
-({String name, double? price}) _parseLineItem(String line) {
-  final match = _lineItemPriceRegex.firstMatch(line);
-  if (match == null) return (name: line, price: null);
-  final price = double.tryParse(match.group(1)!.replaceAll(',', '.'));
-  final name = line.substring(0, match.start).trim();
-  return (name: name, price: price);
-}
-
-// =============================================================================
 // Beleg-Detail BottomSheet Widget
 // =============================================================================
 
@@ -1052,7 +1030,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     _nameControllers = [];
     _priceControllers = [];
     for (final item in items) {
-      final (:name, :price) = _parseLineItem(item);
+      final (:name, :price) = parseLineItem(item);
       _nameControllers.add(TextEditingController(text: name));
       _priceControllers.add(
         TextEditingController(
@@ -1082,7 +1060,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   /// Speichert die geänderten Positionen in der Datenbank.
   ///
   /// Jeder Artikel wird als "<Name>  <Preis>" gespeichert – das doppelte
-  /// Leerzeichen dient als Trenner, da [_parseLineItem] `\s+` vor dem Preis
+  /// Leerzeichen dient als Trenner, da [parseLineItem] `\s+` vor dem Preis
   /// am Zeilenende erkennt und die Rekonstruktion damit zuverlässig gelingt.
   Future<void> _saveChanges() async {
     setState(() => _isSaving = true);

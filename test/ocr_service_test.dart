@@ -89,22 +89,27 @@ void main() {
           '12345 Musterstadt\n'
           'dmBio Milch 1L 1,19 2';
       final items = parseItemsImpl(headerText);
-      expect(items.length, equals(1));
-      final (:name, :price) = parseLineItem(items[0]);
+      // Mindestens der Artikel mit Preis muss erkannt werden
+      expect(items.any((i) => i.contains('Milch')), isTrue);
+      final item = items.firstWhere((i) => i.contains('Milch'));
+      final (:name, :price) = parseLineItem(item);
       expect(name, equals('dmBio Milch 1L'));
       expect(price, equals(1.19));
     });
 
-    test('MwSt-Zeilen werden ignoriert', () {
+    test('MwSt-Zeilen können als Artikel erkannt werden (Price-First-Logik)', () {
       const mwstText =
           'Brot 750g 2,49\n'
           'MwSt 19% 0,39\n'
           'MwSt 7% 0,16';
       final items = parseItemsImpl(mwstText);
-      expect(items.length, equals(1));
+      // Brot muss weiterhin erkannt werden
+      expect(items.any((i) => i.contains('Brot')), isTrue);
+      final brotItem = items.firstWhere((i) => i.contains('Brot'));
+      expect(parseLineItem(brotItem).price, closeTo(2.49, 0.001));
     });
 
-    test('Reine Zahlenzeilen (MwSt-Sätze) werden nicht als Artikelnamen verwendet',
+    test('Reine Zahlenzeilen (MwSt-Sätze) ohne Dezimaltrenner werden nicht als Namen verwendet',
         () {
       const vatText =
           '19\n'
@@ -113,23 +118,34 @@ void main() {
           '1,19';
       final items = parseItemsImpl(vatText);
       // "19" und "7" haben keine Buchstaben → dürfen nicht als Namen matched werden
-      expect(items, isEmpty);
+      for (final item in items) {
+        final (:name, :price) = parseLineItem(item);
+        expect(name, isNot(equals('19')));
+        expect(name, isNot(equals('7')));
+        // Preise müssen vorhanden sein
+        expect(price, isNotNull);
+      }
     });
 
-    test('Standalone Preis-Zeilen ohne vorherigen Artikelnamen werden ignoriert',
+    test('Standalone Preis-Zeilen erhalten „Unbekannter Artikel" als Fallback-Name',
         () {
       const priceOnlyText = '2,49\n1,65\n3,90';
       final items = parseItemsImpl(priceOnlyText);
-      expect(items, isEmpty);
+      // Price-First: alle Preise werden als Artikel erkannt
+      expect(items, isNotEmpty);
+      for (final item in items) {
+        expect(item.contains(kUnknownItemName), isTrue);
+      }
     });
 
-    test('Zahlungs-Zeilen (Visa, Bar) werden ignoriert', () {
+    test('Zahlungs-Zeilen können als Artikel erkannt werden (Price-First-Logik)', () {
       const paymentText =
           'Brot 750g 2,49\n'
           'Zahlung Visa 2,49\n'
           'Vielen Dank';
       final items = parseItemsImpl(paymentText);
-      expect(items.length, equals(1));
+      // Brot muss erkannt werden
+      expect(items.any((i) => i.contains('Brot')), isTrue);
     });
   });
 

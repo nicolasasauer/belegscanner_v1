@@ -798,5 +798,44 @@ void main() {
     test('Vergleich ist nicht case-sensitiv ("MILCH" → Lebensmittel)', () {
       expect(categorizeItem('MILCH'), equals('Lebensmittel'));
     });
+
+    test('"Fruchtaufstr" → Lebensmittel', () {
+      expect(categorizeItem('Dmb Fruchtaufstr. Erdb. 250g'), equals('Lebensmittel'));
+    });
+
+    test('"Seife" → Drogerie', () {
+      expect(categorizeItem('Handseife 300ml'), equals('Drogerie'));
+    });
+
+    test('"Wein" → Getränke', () {
+      expect(categorizeItem('Rotwein Merlot 0,75l'), equals('Getränke'));
+    });
+
+    test('"Bier" → Getränke', () {
+      expect(categorizeItem('Bier 0,5l'), equals('Getränke'));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests für normalizeName – OCR-Fehlerkorrektur (0 → O)
+  // ---------------------------------------------------------------------------
+
+  group('normalizeName – OCR-Fehlerkorrektur', () {
+    test('Führende "0" wird zu "O" korrigiert wenn Rest Buchstaben enthält', () {
+      expect(normalizeName('0lio Naturale'), equals('Olio Naturale'));
+    });
+
+    test('Führende "0" bei reiner Zahl bleibt unverändert', () {
+      // "0,25" hat keinen Buchstaben im Rest → keine Korrektur
+      expect(normalizeName('0,25'), equals('0,25'));
+    });
+
+    test('Wort ohne führende "0" bleibt unverändert', () {
+      expect(normalizeName('Tofu'), equals('Tofu'));
+    });
+
+    test('OCR-Korrektur: "0BIO" → "Obio" (Title Case nach Korrektur)', () {
+      expect(normalizeName('0BIO'), equals('Obio'));
+    });
   });
 }

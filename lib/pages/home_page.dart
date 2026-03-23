@@ -1613,15 +1613,13 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondaryContainer,
+                color: _categoryColor(category),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 category,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSecondaryContainer,
+                      color: _categoryTextColor(category),
                     ),
               ),
             ),
@@ -1636,6 +1634,38 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
             )
           : null,
     );
+  }
+
+  /// Hintergrundfarbe für ein Kategorie-Label.
+  Color _categoryColor(String category) {
+    switch (category) {
+      case 'Lebensmittel':
+        return Colors.green.shade100;
+      case 'Drogerie':
+        return Colors.blue.shade100;
+      case 'Getränke':
+        return Colors.orange.shade100;
+      case 'Pfand':
+        return Colors.purple.shade100;
+      default:
+        return Colors.grey.shade200;
+    }
+  }
+
+  /// Textfarbe für ein Kategorie-Label (passend zum Hintergrund).
+  Color _categoryTextColor(String category) {
+    switch (category) {
+      case 'Lebensmittel':
+        return Colors.green.shade800;
+      case 'Drogerie':
+        return Colors.blue.shade800;
+      case 'Getränke':
+        return Colors.orange.shade800;
+      case 'Pfand':
+        return Colors.purple.shade800;
+      default:
+        return Colors.grey.shade700;
+    }
   }
 
   /// Editierbare Zeile für einen Artikel (Name + Preis + Löschen-Button + Kategorie).

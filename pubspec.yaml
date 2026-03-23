@@ -37,6 +37,9 @@ dependencies:
   # Permanentes App-Verzeichnis für Belegbilder
   path_provider: ^2.1.4
 
+  # Persistente Einstellungen (z.B. max_concurrent_tasks)
+  shared_preferences: ^2.3.5
+
   # Diagramme für das Statistik-Dashboard
   fl_chart: ^0.69.0
 

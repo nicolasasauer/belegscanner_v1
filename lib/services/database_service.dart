@@ -16,7 +16,7 @@ class DatabaseService {
   static const _dbName = 'belegscanner.db';
   static const _tableName = 'receipts';
   static const _categoriesTable = 'user_categories';
-  static const _dbVersion = 5;
+  static const _dbVersion = 6;
 
   Database? _db;
 
@@ -43,7 +43,9 @@ class DatabaseService {
             items TEXT NOT NULL,
             categories TEXT NOT NULL DEFAULT '[]',
             imagePath TEXT,
-            rawText TEXT
+            rawText TEXT,
+            status TEXT NOT NULL DEFAULT 'completed',
+            progress REAL NOT NULL DEFAULT 1.0
           )
         ''');
         await db.execute('''
@@ -70,12 +72,15 @@ class DatabaseService {
               items TEXT NOT NULL,
               categories TEXT NOT NULL DEFAULT '[]',
               imagePath TEXT,
-              rawText TEXT
+              rawText TEXT,
+              status TEXT NOT NULL DEFAULT 'completed',
+              progress REAL NOT NULL DEFAULT 1.0
             )
           ''');
           await db.execute('''
             INSERT INTO ${_tableName}_new
-              SELECT id, date, totalAmount, items, '[]', imagePath, NULL
+              SELECT id, date, totalAmount, items, '[]', imagePath, NULL,
+                     'completed', 1.0
               FROM $_tableName
           ''');
           await db.execute('DROP TABLE $_tableName');
@@ -111,6 +116,15 @@ class DatabaseService {
           ''');
           await _insertDefaultCategories(db);
         }
+        // Version 5 → Version 6: Status- und Fortschritts-Spalten hinzufügen.
+        if (oldVersion < 6) {
+          await db.execute(
+            "ALTER TABLE $_tableName ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'",
+          );
+          await db.execute(
+            'ALTER TABLE $_tableName ADD COLUMN progress REAL NOT NULL DEFAULT 1.0',
+          );
+        }
       },
     );
   }
@@ -145,6 +159,31 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  /// Aktualisiert einen bestehenden [Receipt] vollständig in der Datenbank.
+  Future<void> updateReceipt(Receipt receipt) async {
+    final db = await database;
+    await db.update(
+      _tableName,
+      receipt.toMap(),
+      where: 'id = ?',
+      whereArgs: [receipt.id],
+    );
+  }
+
+  /// Gibt alle Belege mit dem Status `'processing'` zurück.
+  ///
+  /// Wird beim App-Start verwendet, um unterbrochene Verarbeitungen zu erkennen
+  /// und als `'failed'` zu markieren.
+  Future<List<Receipt>> getProcessingReceipts() async {
+    final db = await database;
+    final maps = await db.query(
+      _tableName,
+      where: 'status = ?',
+      whereArgs: ['processing'],
+    );
+    return maps.map(Receipt.fromMap).toList();
   }
 
   /// Gibt den vollständigen Pfad zur Datenbankdatei zurück.

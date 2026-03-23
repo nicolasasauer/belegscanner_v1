@@ -9,12 +9,19 @@ void main() {
   // ---------------------------------------------------------------------------
 
   group('parseItemsImpl – dm-Beleg', () {
-    // Simulierter OCR-Output eines dm-Belegs:
-    // Zwei Artikel auf derselben Zeile (Name + Preis), gefolgt von SUMME.
+    // Simulierter OCR-Output eines echten dm-Belegs:
+    // Name und Preis stehen auf ZWEI getrennten Zeilen (Look-Ahead-Format).
+    // Header-Zeilen (GmbH, Datum) werden durch Header-Cut ignoriert.
+    // SUMME steht auf einer eigenen Zeile, Betrag auf der nächsten (EUR X,XX).
     const dmReceiptText =
-        'dmBio Fruchtaufstr. Erdb. 250g 2,25 2\n'
-        'dmBio Tofu Rosso 200g 1,65 2\n'
-        'SUMME 3,90';
+        'dm drogerie markt GmbH\n'
+        '20.03.2026 13:46\n'
+        'dmBio Fruchtaufstr. Erdb. 250g\n'
+        '2,25 2\n'
+        'dmBio Tofu Rosso 200g\n'
+        '1,65 2\n'
+        'SUMME\n'
+        'EUR 3,90';
 
     test('Erkennt genau zwei Artikel', () {
       final items = parseItemsImpl(dmReceiptText);
@@ -39,6 +46,15 @@ void main() {
     test('SUMME-Zeile wird ignoriert', () {
       final items = parseItemsImpl(dmReceiptText);
       expect(items.any((i) => i.toLowerCase().contains('summe')), isFalse);
+    });
+
+    test('Header-Zeile "GmbH" erscheint nicht in der Artikelliste', () {
+      final items = parseItemsImpl(dmReceiptText);
+      expect(items.any((i) => i.contains('GmbH')), isFalse);
+    });
+
+    test('Gesamtbetrag aus "SUMME\\nEUR 3,90" wird korrekt erkannt', () {
+      expect(parseAmountImpl(dmReceiptText), closeTo(3.90, 0.001));
     });
   });
 
@@ -95,6 +111,22 @@ void main() {
       final (:name, :price) = parseLineItem(item);
       expect(name, equals('dmBio Milch 1L'));
       expect(price, equals(1.19));
+    });
+
+    test(
+        'Sperrliste: GmbH-Zeile ohne Datum-Anker wird als Header übersprungen',
+        () {
+      // Kein Datum → kein Header-Cut. Sperrliste überspringt "GmbH"-Zeilen.
+      const blocklistText =
+          'Muster GmbH\n'
+          'UID-Nr. AT123456789\n'
+          'Apfelsaft 1L 1,49\n'
+          'Wasser 0,5L 0,79\n'
+          'SUMME 2,28';
+      final items = parseItemsImpl(blocklistText);
+      expect(items.any((i) => i.contains('GmbH')), isFalse);
+      expect(items.any((i) => i.contains('UID-Nr')), isFalse);
+      expect(items.any((i) => i.contains('Apfelsaft')), isTrue);
     });
 
     test('MwSt-Zeilen können als Artikel erkannt werden (Price-First-Logik)', () {
@@ -212,6 +244,21 @@ void main() {
     test('SUMME auf nächster Zeile wird erkannt', () {
       const text = 'Artikel 1 5,00\nSUMME\n5,00';
       expect(parseAmountImpl(text), closeTo(5.00, 0.001));
+    });
+
+    test('SUMME mit EUR-Präfix auf nächster Zeile wird erkannt (dm-Format)', () {
+      const text = 'Artikel 1 2,25\nArtikel 2 1,65\nSUMME\nEUR 3,90';
+      expect(parseAmountImpl(text), closeTo(3.90, 0.001));
+    });
+
+    test(
+        'EUR X,XX auf nächster Zeile nach SUMME stört Artikel-Erkennung nicht',
+        () {
+      // Sicherstellen, dass "EUR 3,90" nach dem Footer-Cut nicht als Artikel landet.
+      const text = 'Artikel 1 2,25\nArtikel 2 1,65\nSUMME\nEUR 3,90';
+      final items = parseItemsImpl(text);
+      expect(items.length, equals(2));
+      expect(items.any((i) => i.contains('EUR')), isFalse);
     });
   });
 
@@ -537,6 +584,119 @@ void main() {
     test('Summe 9,30 € korrekt erkannt – nicht 23,03 € aus Terminal-Daten',
         () {
       expect(parseAmountImpl(redBullReceiptText), closeTo(9.30, 0.001));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests für parseItemsHeuristic / parseItemsImpl – scrambled dm-Beleg
+  // ("Endgegner"-Text: Namen und Preise vollständig getrennt)
+  // ---------------------------------------------------------------------------
+
+  group('parseItemsHeuristic – scrambled dm-Beleg', () {
+    // Simulierter OCR-Output, bei dem die Artikel-Namen und -Preise
+    // komplett in verschiedenen Textbereichen erscheinen.
+    // SUMME taucht auf Zeile 2 auf → primäre Logik findet 0 Artikel →
+    // Heuristik-Queue-Logik greift als Fallback.
+    // Erwartetes Ergebnis: 2 Artikel (Fruchtaufstrich 2,25 €, Tofu 1,65 €)
+    // und Gesamtsumme 3,90 €.
+    const scrambledDmText =
+        '21.03.2026 13:45 O503/1 125317/1 3889\n'
+        'SUMME\n'
+        'dmBio Fruchtaufstr.Erdb.250g\n'
+        'dm drogerie markt GmbH\n'
+        'Marktgraben 27\n'
+        'dmBio Tofu ROsso 200g\n'
+        'Visa Credit EUR\n'
+        'Buchung\n'
+        '6020 Innsbruck\n'
+        '21.03.2026\n'
+        '0512-587041\n'
+        'MWSt-Satz\n'
+        'Total-EFT EUR:\n'
+        '2=10,00%\n'
+        'XXX9471\n'
+        '1/1/1227** ************ * **** *******00256601\n'
+        'Summe Nettobetr\n'
+        '3,90\n'
+        '#31514283*00256601/695688/00999100200#\n'
+        'visa Debit Contactless\n'
+        '3,55\n'
+        'Für diesen Einkauf hätten sie\n'
+        '3 PAYBACK Punkte erhalten\n'
+        'öffnungszeiten auf dm. at\n'
+        'Hier bin ich Mensch\n'
+        'EUR\n'
+        'Hier kauf ich ein\n'
+        '2,25\n'
+        'Danke für Ihren Einkauf\n'
+        'ATU 35195908\n'
+        '1,65\n'
+        '3,90\n'
+        '-3,90\n'
+        '13:46:00\n'
+        '3.90\n'
+        'EFSTA. NET#376320361139479120207678\n'
+        '2\n'
+        '2\n'
+        'MWSt\n'
+        '0,35\n'
+        '21.03. 2026 13:45 0503/1 125317/1 3889';
+
+    test('parseItemsImpl erkennt genau zwei Artikel (via Heuristik-Fallback)',
+        () {
+      final items = parseItemsImpl(scrambledDmText);
+      expect(items.length, equals(2));
+    });
+
+    test('Erster Artikel: Name = "dmBio Fruchtaufstr.Erdb.250g", Preis = 2.25',
+        () {
+      final items = parseItemsImpl(scrambledDmText);
+      final (:name, :price) = parseLineItem(items[0]);
+      expect(name, equals('dmBio Fruchtaufstr.Erdb.250g'));
+      expect(price, closeTo(2.25, 0.001));
+    });
+
+    test('Zweiter Artikel: Name = "dmBio Tofu ROsso 200g", Preis = 1.65', () {
+      final items = parseItemsImpl(scrambledDmText);
+      final (:name, :price) = parseLineItem(items[1]);
+      expect(name, equals('dmBio Tofu ROsso 200g'));
+      expect(price, closeTo(1.65, 0.001));
+    });
+
+    test('Gesamtbetrag = 3,90 (aus "Summe Nettobetr\\n3,90")', () {
+      expect(parseAmountImpl(scrambledDmText), closeTo(3.90, 0.001));
+    });
+
+    test('MwSt-Betrag 0,35 erscheint nicht als Artikelpreis', () {
+      final items = parseItemsImpl(scrambledDmText);
+      for (final item in items) {
+        final (:name, :price) = parseLineItem(item);
+        expect(price, isNot(closeTo(0.35, 0.001)),
+            reason: 'MwSt-Betrag 0,35 darf kein Artikelpreis sein');
+      }
+    });
+
+    test('Junk-Zeilen (GmbH, Visa, ATU, Payback, Danke) erscheinen nicht in der Artikelliste',
+        () {
+      final items = parseItemsImpl(scrambledDmText);
+      for (final item in items) {
+        expect(item.toLowerCase(), isNot(contains('gmbh')));
+        expect(item.toLowerCase(), isNot(contains('visa')));
+        expect(item.toLowerCase(), isNot(contains('atu')));
+        expect(item.toLowerCase(), isNot(contains('payback')));
+        expect(item.toLowerCase(), isNot(contains('danke')));
+        expect(item.toLowerCase(), isNot(contains('summe')));
+        expect(item.toLowerCase(), isNot(contains('contactless')));
+        expect(item.toLowerCase(), isNot(contains('efsta')));
+      }
+    });
+
+    test('parseItemsHeuristic direkt: liefert dieselben 2 Artikel', () {
+      final items = parseItemsHeuristic(scrambledDmText);
+      expect(items.length, equals(2));
+      final (:name, :price) = parseLineItem(items[0]);
+      expect(name, equals('dmBio Fruchtaufstr.Erdb.250g'));
+      expect(price, closeTo(2.25, 0.001));
     });
   });
 }

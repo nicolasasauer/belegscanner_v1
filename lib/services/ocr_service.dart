@@ -185,7 +185,7 @@ double parseAmountImpl(String text) {
   final lines = text.split('\n');
   for (int i = 0; i < lines.length; i++) {
     final line = lines[i].trim();
-    if (RegExp(r'\b(?:SUMME|TOTAL)\b', caseSensitive: false).hasMatch(line)) {
+    if (RegExp(r'\b(?:SUMME|TOTAL)\b(?!-)', caseSensitive: false).hasMatch(line)) {
       // Preis direkt auf derselben Zeile
       final sameLine = pricePattern.firstMatch(line);
       if (sameLine != null) {
@@ -771,9 +771,10 @@ class OcrService {
     // Kategorien aus der Datenbank laden (für dynamische Zuordnung).
     // Schlägt das Laden fehl, greift der statische categoryMap-Fallback.
     List<Map<String, dynamic>> categoryData = [];
-    if (_databaseService != null) {
+    final db = _databaseService;
+    if (db != null) {
       try {
-        final cats = await _databaseService.getCategories();
+        final cats = await db.getCategories();
         categoryData = cats.map((c) => c.toMap()).toList();
       } catch (e) {
         debugPrint('[OcrService] Kategorien konnten nicht geladen werden: $e');

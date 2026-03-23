@@ -180,6 +180,23 @@ void main() {
     test('Gibt 0.0 zurück, wenn kein Betrag gefunden wird', () {
       expect(parseAmountImpl('kein preis hier'), equals(0.0));
     });
+
+    test('SUMME hat Vorrang vor EUR-Zeile mit größerem Betrag', () {
+      // Simuliert Terminal-Daten mit "23,03 EUR" nach der echten Summe
+      const text =
+          'RED BULL 6,36\n'
+          'PFAND 0,25\n'
+          'SUMME 9,30\n'
+          'Mastercard\n'
+          'DEBIT\n'
+          '23,03 EUR';
+      expect(parseAmountImpl(text), closeTo(9.30, 0.001));
+    });
+
+    test('SUMME auf nächster Zeile wird erkannt', () {
+      const text = 'Artikel 1 5,00\nSUMME\n5,00';
+      expect(parseAmountImpl(text), closeTo(5.00, 0.001));
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -215,6 +232,98 @@ void main() {
       final (:name, :price) = parseLineItem('Milch 1L 2.99');
       expect(name, equals('Milch 1L'));
       expect(price, closeTo(2.99, 0.001));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests für parseItemsImpl / parseAmountImpl – Red Bull Beleg mit
+  // Terminal-Daten (Regression für falsch erkannte Summe 23,03 € statt 9,30 €)
+  // ---------------------------------------------------------------------------
+
+  group('parseItemsImpl / parseAmountImpl – Red Bull Beleg mit Terminal-Daten',
+      () {
+    // Simulierter OCR-Output eines Kassenbons mit:
+    //   - Multi-Line-Artikel (Name auf Zeile über der Mengenberechnung)
+    //   - PFAND als normaler Artikel
+    //   - Mastercard-Terminal-Daten am Ende (inkl. falscher Betrag 23,03 EUR)
+    const redBullReceiptText =
+        'RED BULL\n'
+        '4 X 1,59\n'
+        '6,36\n'
+        'PFAND 0,25\n'
+        'WASSER STILL 1L 2,69\n'
+        'SUMME 9,30\n'
+        'Kundenbeleg\n'
+        'Mastercard\n'
+        'contactless\n'
+        'DEBIT\n'
+        'A0000000041010\n'
+        'Acq-Id: 12345678\n'
+        'Trm-Id: 98765432\n'
+        'AID: A0000000041010\n'
+        'PAN: ****1234\n'
+        'Track2: 1234\n'
+        'Verarbeitung OK\n'
+        '23,03 EUR';
+
+    test('Erkennt RED BULL als Multi-Line-Artikel mit Gesamtpreis 6,36', () {
+      final items = parseItemsImpl(redBullReceiptText);
+      // Bewusst case-sensitiv: der Artikelname muss als "RED BULL" (Großschrift)
+      // erhalten bleiben, da OCR ihn so geliefert hat.
+      final redBullItem = items.firstWhere(
+        (i) => i.contains('RED BULL'),
+        orElse: () => '',
+      );
+      expect(redBullItem, isNotEmpty,
+          reason: 'RED BULL sollte als Artikel erkannt werden');
+      final (:name, :price) = parseLineItem(redBullItem);
+      expect(name, equals('RED BULL'));
+      expect(price, closeTo(6.36, 0.001));
+    });
+
+    test('"4 X" wird nicht als Artikelname gespeichert', () {
+      final items = parseItemsImpl(redBullReceiptText);
+      for (final item in items) {
+        expect(item, isNot(matches(r'^\d+\s*[xX]\s*\d')),
+            reason: 'Mengenberechnungszeilen dürfen nicht als Artikel landen');
+      }
+    });
+
+    test('PFAND wird als normaler Artikel erkannt', () {
+      final items = parseItemsImpl(redBullReceiptText);
+      final pfandItem = items.firstWhere(
+        (i) => i.toLowerCase().contains('pfand'),
+        orElse: () => '',
+      );
+      expect(pfandItem, isNotEmpty,
+          reason: 'PFAND sollte als Artikel erkannt werden');
+      final (:name, :price) = parseLineItem(pfandItem);
+      expect(price, closeTo(0.25, 0.001));
+    });
+
+    test('WASSER STILL wird als Artikel erkannt', () {
+      final items = parseItemsImpl(redBullReceiptText);
+      expect(items.any((i) => i.contains('WASSER STILL')), isTrue);
+    });
+
+    test('Terminal-Daten erscheinen nicht in der Artikelliste', () {
+      final items = parseItemsImpl(redBullReceiptText);
+      for (final item in items) {
+        expect(item.toLowerCase(), isNot(contains('kundenbeleg')));
+        expect(item.toLowerCase(), isNot(contains('contactless')));
+        expect(item.toLowerCase(), isNot(contains('debit')));
+        expect(item.toLowerCase(), isNot(contains('mastercard')));
+        expect(item, isNot(contains('A0000000041010')));
+        expect(item.toLowerCase(), isNot(contains('acq')));
+        expect(item.toLowerCase(), isNot(contains('trm')));
+        expect(item.toLowerCase(), isNot(contains('track')));
+        expect(item.toLowerCase(), isNot(contains('verarbeitung')));
+      }
+    });
+
+    test('Summe 9,30 € korrekt erkannt – nicht 23,03 € aus Terminal-Daten',
+        () {
+      expect(parseAmountImpl(redBullReceiptText), closeTo(9.30, 0.001));
     });
   });
 }

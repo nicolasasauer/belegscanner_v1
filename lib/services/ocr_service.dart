@@ -42,30 +42,69 @@ final RegExp lineItemPriceRegex =
 
 /// Extrahiert den Gesamtbetrag aus dem OCR-Text.
 ///
-/// Sucht nach deutschen Schlüsselwörtern wie "Summe", "Gesamtbetrag",
-/// "Zahlbetrag", "Total", "Bar" sowie dem Euro-Zeichen und parst den
-/// zugehörigen Betrag. Unterstützt Punkt und Komma als Dezimaltrenner
-/// (z. B. 14,95 und 14.95).
+/// Sucht bevorzugt nach "SUMME" oder "TOTAL" (direkt daneben oder darunter),
+/// dann nach anderen deutschen Schlüsselwörtern wie "Gesamtbetrag",
+/// "Zahlbetrag", "Bar", und zuletzt nach EUR/€-Zeilen.
+/// Unterstützt Punkt und Komma als Dezimaltrenner (z. B. 14,95 und 14.95).
 @visibleForTesting
 double parseAmountImpl(String text) {
-  // Erweiterte Schlüsselwörter für deutsche Belege
-  final RegExp amountRegex = RegExp(
-    r'(?:gesamtbetrag|zahlbetrag|total|summe|gesamt|betrag|amount|\bbar\b|€|eur)\D*'
+  final pricePattern = RegExp(r'(\d{1,6}[.,]\d{2})');
+
+  // Priorität 1: SUMME oder TOTAL – zeilenweise suchen, damit
+  // Terminal-Daten (EUR 23,03) mit niedrigerer Priorität behandelt werden.
+  final lines = text.split('\n');
+  for (int i = 0; i < lines.length; i++) {
+    final line = lines[i].trim();
+    if (RegExp(r'\b(?:SUMME|TOTAL)\b', caseSensitive: false).hasMatch(line)) {
+      // Preis direkt auf derselben Zeile
+      final sameLine = pricePattern.firstMatch(line);
+      if (sameLine != null) {
+        final value =
+            double.tryParse(sameLine.group(1)!.replaceAll(',', '.'));
+        if (value != null && value > 0) return value;
+      }
+      // Preis auf der nächsten Zeile
+      if (i + 1 < lines.length) {
+        final nextLine = pricePattern.firstMatch(lines[i + 1].trim());
+        if (nextLine != null) {
+          final value =
+              double.tryParse(nextLine.group(1)!.replaceAll(',', '.'));
+          if (value != null && value > 0) return value;
+        }
+      }
+    }
+  }
+
+  // Priorität 2: Weitere Gesamtbetrag-Schlüsselwörter (ohne EUR/€,
+  // da diese auch in Terminal-Daten vorkommen).
+  final RegExp amountKeywordRegex = RegExp(
+    r'(?:gesamtbetrag|zahlbetrag|gesamt|betrag|amount|\bbar\b)\D*'
     r'(\d{1,6}[.,]\d{2})',
     caseSensitive: false,
   );
+  final match2 = amountKeywordRegex.firstMatch(text);
+  if (match2 != null) {
+    final value =
+        double.tryParse(match2.group(1)!.replaceAll(',', '.'));
+    if (value != null && value > 0) return value;
+  }
 
-  final match = amountRegex.firstMatch(text);
-  if (match != null) {
-    // Komma als Dezimaltrenner (z. B. 14,95) in Punkt umwandeln
-    final rawAmount = match.group(1)!.replaceAll(',', '.');
-    return double.tryParse(rawAmount) ?? 0.0;
+  // Priorität 3: EUR / €-Zeilen (niedrigere Priorität, da auch in
+  // Terminal-Daten vorhanden sein können).
+  final RegExp euroRegex = RegExp(
+    r'(?:€|eur)\D*(\d{1,6}[.,]\d{2})',
+    caseSensitive: false,
+  );
+  final match3 = euroRegex.firstMatch(text);
+  if (match3 != null) {
+    final value =
+        double.tryParse(match3.group(1)!.replaceAll(',', '.'));
+    if (value != null && value > 0) return value;
   }
 
   // Fallback: größten Betrag im Text suchen
-  final RegExp fallbackRegex = RegExp(r'(\d{1,6}[.,]\d{2})');
   double maxAmount = 0.0;
-  for (final m in fallbackRegex.allMatches(text)) {
+  for (final m in pricePattern.allMatches(text)) {
     final value = double.tryParse(m.group(1)!.replaceAll(',', '.')) ?? 0.0;
     if (value > maxAmount) {
       maxAmount = value;
@@ -78,9 +117,11 @@ double parseAmountImpl(String text) {
 /// filtert Header-Daten, Zahlungszeilen, Summenzeilen sowie Junk-Text heraus.
 ///
 /// Angewendete Schritte:
-///   1. Header-, Meta-, Zahlungs- und Summenzeilen werden per Regex-
-///      Ausschlussliste entfernt (z. B. GmbH, PLZ, Telefon, Summe, MwSt,
-///      EUR, Zahlung, Visa, Payback, Werbe-Slogans).
+///   1. Header-, Meta-, Zahlungs-, Terminal- und Summenzeilen werden per
+///      Regex-Ausschlussliste entfernt (z. B. GmbH, PLZ, Telefon, Summe,
+///      MwSt, EUR, Zahlung, Visa, Payback, Terminal-IDs, Werbe-Slogans).
+///      Zeilen aus langen alphanumerischen Zeichenketten (Terminal-Daten
+///      wie AID "A0000000041010") werden ebenfalls verworfen.
 ///   2. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio", "dnBio")
 ///      werden gestripped, sodass der Artikelname erhalten bleibt.
 ///   3. Paare aus [NAME] und [PREIS] werden erkannt:
@@ -88,15 +129,18 @@ double parseAmountImpl(String text) {
 ///      - Reine Text-Zeilen gefolgt von einer reinen Preis-Zeile →
 ///        zusammengeführt (OCR-Toleranz: OCR schiebt Preis manchmal in die
 ///        nächste Zeile).
-///      - Standalone-Preis-Zeilen und reine Zahlen (z. B. MwSt-Sätze)
-///        werden ignoriert.
+///      - Reine Text-Zeilen gefolgt von einer Mengenberechnung
+///        (z. B. "4 X 1,59") und dann einer Preis-Zeile → Name mit dem
+///        Gesamtpreis zusammengeführt (Multi-Line-Artikel).
+///      - Standalone-Preis-Zeilen, Mengenberechnungs-Zeilen und reine
+///        Zahlen (z. B. MwSt-Sätze) werden ignoriert.
 ///
 /// Jeder erkannte Treffer wird per [debugPrint] mit
 /// `[OCR-Match] Found: Name=… Price=…` protokolliert.
 @visibleForTesting
 List<String> parseItemsImpl(String text) {
-  // 1. Ausschlussmuster für typische Bon-Header, Meta-Daten, Summen- und
-  //    Zahlungszeilen sowie Werbe-Slogans.
+  // 1. Ausschlussmuster für typische Bon-Header, Meta-Daten, Summen-,
+  //    Zahlungs- und Terminal-Zeilen sowie Werbe-Slogans.
   final RegExp headerPattern = RegExp(
     // Rechtsformen / Firmenbezeichnungen
     r'GmbH|OHG|e\.K\.|'
@@ -123,6 +167,10 @@ List<String> parseItemsImpl(String text) {
     r'\bZahlung\b|\bBargeld\b|\bBar\b|\bGegeben\b|'
     r'\bRückgeld\b|\bWechselgeld\b|'
     r'\bVisa\b|\bMastercard\b|\bMaestro\b|\bEC-Karte\b|\bKartenzahlung\b|'
+    r'\bDEBIT\b|\bCREDIT\b|'
+    // Terminal-Daten (Kartenzahlung-Details / NFC)
+    r'\bAcq-?Id\b|\bTrm-?Id\b|\bAID\b|\bVerarbeitung\s+OK\b|'
+    r'\bKundenbeleg\b|\bcontactless\b|\bPAN\b|\bTrack2?\b|'
     // Kundenbindungsprogramme
     r'\bPayback\b|\bBonus\b|\bPunkte\b|\bCoupon\b|\bGutschein\b|'
     // Kasseninformationen
@@ -152,12 +200,26 @@ List<String> parseItemsImpl(String text) {
     r'(?=.*[A-Za-zÄÖÜäöüß]).+\s+\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
   );
 
-  // Schritt 1: Zeilen säubern und Header-/Meta-Zeilen entfernen
+  // 3c. Mengenberechnungs-Muster: z. B. "4 X 1,59" oder "2x0,99"
+  //     Diese Zeilen enthalten keine eigenständigen Artikelnamen und werden
+  //     nur im Kontext von Multi-Line-Artikeln ausgewertet.
+  final RegExp qtyCalcPattern = RegExp(
+    r'^\d+\s*[xX]\s*\d{1,4}[.,]\d{2}',
+  );
+
+  // 3d. Lange alphanumerische Zeichenketten (Terminal-Hex-Daten wie
+  //     "A0000000041010") – werden komplett ignoriert.
+  final RegExp hexDataPattern = RegExp(r'^[A-Fa-f0-9]{10,}$');
+
+  // Schritt 1: Zeilen säubern, Header-/Meta-/Terminal-Zeilen entfernen und
+  //            lange alphanumerische Zeichenketten (Terminal-Hex-Daten wie
+  //            "A0000000041010") herausfiltern.
   final lines = text
       .split('\n')
       .map((l) => l.trim())
       .where((l) => l.isNotEmpty)
       .where((l) => !headerPattern.hasMatch(l))
+      .where((l) => !hexDataPattern.hasMatch(l))
       .map((l) => l.replaceFirst(junkPrefixPattern, '').trim())
       .where((l) => l.isNotEmpty)
       .toList();
@@ -174,6 +236,13 @@ List<String> parseItemsImpl(String text) {
       continue;
     }
 
+    // Mengenberechnungs-Zeile (z. B. "4 X 1,59") ohne vorherigen
+    // Artikel-Kontext → überspringen, damit "4 X" nicht als Name landet.
+    if (qtyCalcPattern.hasMatch(line)) {
+      i++;
+      continue;
+    }
+
     // Vollständiger Artikel: Name + Preis auf derselben Zeile
     if (itemWithPricePattern.hasMatch(line)) {
       result.add(line);
@@ -183,21 +252,36 @@ List<String> parseItemsImpl(String text) {
       continue;
     }
 
-    // Reine Text-Zeile: Prüfen ob die nächste Zeile ein Preis ist
-    // (OCR-Toleranz für zeilengetrennten Namen und Preis).
+    // Reine Text-Zeile: Prüfen ob folgende Zeilen einen Preis liefern.
     // Bedingung: die aktuelle Zeile muss mindestens einen Buchstaben enthalten,
     // damit reine Zahlenzeilen (z. B. MwSt-Prozentsätze) nicht als Namen
     // behandelt werden.
     final bool nameHasLetter = RegExp(r'[A-Za-zÄÖÜäöüß]').hasMatch(line);
-    if (nameHasLetter &&
-        i + 1 < lines.length &&
-        priceOnlyPattern.hasMatch(lines[i + 1])) {
-      final merged = '$line  ${lines[i + 1].trim()}';
-      result.add(merged);
-      final (:name, :price) = parseLineItem(merged);
-      debugPrint('[OCR-Match] Found: Name=$name, Price=${price ?? "–"}');
-      i += 2;
-      continue;
+    if (nameHasLetter) {
+      // Fall A: Name | Mengenberechnung (z. B. "4 X 1,59") | Gesamtpreis
+      //         → Multi-Line-Artikel: Name mit Gesamtpreis zusammenführen.
+      if (i + 2 < lines.length &&
+          qtyCalcPattern.hasMatch(lines[i + 1]) &&
+          priceOnlyPattern.hasMatch(lines[i + 2])) {
+        final merged = '$line  ${lines[i + 2].trim()}';
+        result.add(merged);
+        final (:name, :price) = parseLineItem(merged);
+        debugPrint(
+            '[OCR-Match] Found (multi-line): Name=$name, Price=${price ?? "–"}');
+        i += 3;
+        continue;
+      }
+
+      // Fall B: Name | Preis (OCR hat Preis auf die nächste Zeile verschoben)
+      if (i + 1 < lines.length &&
+          priceOnlyPattern.hasMatch(lines[i + 1])) {
+        final merged = '$line  ${lines[i + 1].trim()}';
+        result.add(merged);
+        final (:name, :price) = parseLineItem(merged);
+        debugPrint('[OCR-Match] Found: Name=$name, Price=${price ?? "–"}');
+        i += 2;
+        continue;
+      }
     }
 
     // Text-Zeile ohne zugehörigen Preis → ignorieren

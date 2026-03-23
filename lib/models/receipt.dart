@@ -33,6 +33,26 @@ class Receipt {
   /// bei Altdaten oder wenn die OCR keinen Text zurückgegeben hat.
   final String? rawText;
 
+  /// Verarbeitungsstatus des Belegs.
+  ///
+  /// Mögliche Werte:
+  ///   - `'processing'`: OCR-Verarbeitung läuft im Hintergrund.
+  ///   - `'completed'`: Verarbeitung abgeschlossen.
+  ///   - `'failed'`: Verarbeitung fehlgeschlagen (z. B. nach App-Neustart).
+  final String status;
+
+  /// Fortschritt der Verarbeitung (0.0–1.0).
+  ///
+  /// Wird während der OCR-Verarbeitung aktualisiert.
+  final double progress;
+
+  /// SHA-256-Hash der Bilddatei.
+  ///
+  /// Dient der Duplikatserkennung: Bevor ein neues Bild verarbeitet wird,
+  /// wird geprüft, ob bereits ein Beleg mit demselben Hash existiert.
+  /// Kann `null` sein bei Altdaten oder wenn kein Bild vorhanden ist.
+  final String? fileHash;
+
   const Receipt({
     required this.id,
     required this.date,
@@ -41,6 +61,9 @@ class Receipt {
     this.categories = const [],
     this.imagePath,
     this.rawText,
+    this.status = 'completed',
+    this.progress = 1.0,
+    this.fileHash,
   });
 
   /// Gibt die Kategorie für den Artikel an Index [i] zurück.
@@ -59,6 +82,9 @@ class Receipt {
     List<String>? categories,
     String? imagePath,
     String? rawText,
+    String? status,
+    double? progress,
+    String? fileHash,
   }) {
     return Receipt(
       id: id ?? this.id,
@@ -68,6 +94,9 @@ class Receipt {
       categories: categories ?? this.categories,
       imagePath: imagePath ?? this.imagePath,
       rawText: rawText ?? this.rawText,
+      status: status ?? this.status,
+      progress: progress ?? this.progress,
+      fileHash: fileHash ?? this.fileHash,
     );
   }
 
@@ -84,6 +113,9 @@ class Receipt {
       'categories': jsonEncode(categories),
       'imagePath': imagePath,
       'rawText': rawText,
+      'status': status,
+      'progress': progress,
+      'fileHash': fileHash,
     };
   }
 
@@ -108,6 +140,9 @@ class Receipt {
       categories: categories,
       imagePath: map['imagePath'] as String?,
       rawText: map['rawText'] as String?,
+      status: map['status'] as String? ?? 'completed',
+      progress: (map['progress'] as num?)?.toDouble() ?? 1.0,
+      fileHash: map['fileHash'] as String?,
     );
   }
 
@@ -115,6 +150,7 @@ class Receipt {
   String toString() {
     return 'Receipt(id: $id, date: $date, totalAmount: $totalAmount, '
         'items: $items, categories: $categories, imagePath: $imagePath, '
-        'rawText: ${rawText != null ? "${rawText!.length} chars" : "null"})';
+        'rawText: ${rawText != null ? "${rawText!.length} chars" : "null"}, '
+        'status: $status, progress: $progress, fileHash: $fileHash)';
   }
 }

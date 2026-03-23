@@ -1,10 +1,37 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' hide Category;
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../models/category.dart';
 import '../models/receipt.dart';
+
+// ---------------------------------------------------------------------------
+// Top-level Hashing-Funktion (compute-kompatibel)
+// ---------------------------------------------------------------------------
+
+/// Berechnet den SHA-256-Hash der Datei unter [filePath] und gibt ihn als
+/// Hex-String zurück.
+///
+/// Diese Top-level-Funktion ist für [compute] geeignet, damit das Hashing
+/// großer Bilddateien den UI-Thread nicht blockiert.
+///
+/// Gibt `null` zurück, wenn die Datei nicht existiert oder ein Fehler
+/// auftritt.
+Future<String?> computeFileHash(String filePath) async {
+  try {
+    final file = File(filePath);
+    if (!file.existsSync()) return null;
+    final bytes = await file.readAsBytes();
+    return sha256.convert(bytes).toString();
+  } catch (e) {
+    debugPrint('[computeFileHash] Fehler beim Hashing von $filePath: $e');
+    return null;
+  }
+}
 
 /// Service für die lokale SQLite-Datenbank.
 ///
@@ -16,7 +43,7 @@ class DatabaseService {
   static const _dbName = 'belegscanner.db';
   static const _tableName = 'receipts';
   static const _categoriesTable = 'user_categories';
-  static const _dbVersion = 5;
+  static const _dbVersion = 7;
 
   Database? _db;
 
@@ -43,7 +70,10 @@ class DatabaseService {
             items TEXT NOT NULL,
             categories TEXT NOT NULL DEFAULT '[]',
             imagePath TEXT,
-            rawText TEXT
+            rawText TEXT,
+            status TEXT NOT NULL DEFAULT 'completed',
+            progress REAL NOT NULL DEFAULT 1.0,
+            fileHash TEXT
           )
         ''');
         await db.execute('''
@@ -70,12 +100,18 @@ class DatabaseService {
               items TEXT NOT NULL,
               categories TEXT NOT NULL DEFAULT '[]',
               imagePath TEXT,
-              rawText TEXT
+              rawText TEXT,
+              status TEXT NOT NULL DEFAULT 'completed',
+              progress REAL NOT NULL DEFAULT 1.0,
+              fileHash TEXT
             )
           ''');
           await db.execute('''
             INSERT INTO ${_tableName}_new
-              SELECT id, date, totalAmount, items, '[]', imagePath, NULL
+              (id, date, totalAmount, items, categories, imagePath,
+               rawText, status, progress, fileHash)
+              SELECT id, date, totalAmount, items, '[]', imagePath,
+                     NULL, 'completed', 1.0, NULL
               FROM $_tableName
           ''');
           await db.execute('DROP TABLE $_tableName');
@@ -111,6 +147,21 @@ class DatabaseService {
           ''');
           await _insertDefaultCategories(db);
         }
+        // Version 5 → Version 6: Status- und Fortschritts-Spalten hinzufügen.
+        if (oldVersion < 6) {
+          await db.execute(
+            "ALTER TABLE $_tableName ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'",
+          );
+          await db.execute(
+            'ALTER TABLE $_tableName ADD COLUMN progress REAL NOT NULL DEFAULT 1.0',
+          );
+        }
+        // Version 6 → Version 7: fileHash-Spalte für Duplikatserkennung.
+        if (oldVersion < 7) {
+          await db.execute(
+            'ALTER TABLE $_tableName ADD COLUMN fileHash TEXT',
+          );
+        }
       },
     );
   }
@@ -145,6 +196,49 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  /// Aktualisiert einen bestehenden [Receipt] vollständig in der Datenbank.
+  Future<void> updateReceipt(Receipt receipt) async {
+    final db = await database;
+    await db.update(
+      _tableName,
+      receipt.toMap(),
+      where: 'id = ?',
+      whereArgs: [receipt.id],
+    );
+  }
+
+  /// Gibt alle Belege mit dem Status `'processing'` zurück.
+  ///
+  /// Wird beim App-Start verwendet, um unterbrochene Verarbeitungen zu erkennen
+  /// und als `'failed'` zu markieren.
+  Future<List<Receipt>> getProcessingReceipts() async {
+    final db = await database;
+    final maps = await db.query(
+      _tableName,
+      where: 'status = ?',
+      whereArgs: ['processing'],
+    );
+    return maps.map(Receipt.fromMap).toList();
+  }
+
+  /// Sucht nach einem Beleg mit dem angegebenen [fileHash].
+  ///
+  /// Gibt die ID des ersten Treffers zurück oder `null`, wenn kein
+  /// übereinstimmender Eintrag gefunden wird.  Wird zur Duplikatserkennung
+  /// eingesetzt, bevor ein neues Bild verarbeitet wird.
+  Future<String?> findReceiptIdByFileHash(String fileHash) async {
+    final db = await database;
+    final rows = await db.query(
+      _tableName,
+      columns: ['id'],
+      where: 'fileHash = ?',
+      whereArgs: [fileHash],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['id'] as String;
   }
 
   /// Gibt den vollständigen Pfad zur Datenbankdatei zurück.

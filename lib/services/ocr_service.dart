@@ -757,7 +757,10 @@ List<String> parseItemsImpl(String text) {
 /// [_smartCategorize] auf jeden Artikel angewendet, sodass die
 /// zurückgegebenen Items bereits normalisierte Namen tragen und die
 /// Kategorien-Liste parallel befüllt ist.
-Map<String, dynamic> _parseOcrText(Map<String, dynamic> params) {
+///
+/// Diese Funktion ist öffentlich, damit sie auch aus dem [ProcessorService]
+/// heraus in einem Background-Isolate via [compute] aufgerufen werden kann.
+Map<String, dynamic> parseOcrText(Map<String, dynamic> params) {
   final text = params['text'] as String;
   final rawCategoryData = params['categoryData'] as List<dynamic>? ?? [];
   final categoryData = rawCategoryData.cast<Map<String, dynamic>>();
@@ -812,19 +815,44 @@ class OcrService {
     return _pickAndProcess(ImageSource.camera);
   }
 
-  /// Öffnet die Galerie, wählt ein Bild aus und erkennt den Text per OCR.
+  /// Öffnet die Galerie, wählt ein **einzelnes** Bild aus und verarbeitet es.
   ///
   /// Gibt einen [Receipt] zurück oder `null`, wenn der Vorgang abgebrochen wurde.
   Future<Receipt?> importFromGallery() async {
     return _pickAndProcess(ImageSource.gallery);
   }
 
-  /// Gemeinsame Implementierung für Kamera- und Galerie-Import.
+  /// Öffnet die Galerie und ermöglicht die Auswahl **mehrerer** Bilder.
   ///
-  /// Öffnet die angegebene [source] (Kamera oder Galerie), gibt `null` zurück,
-  /// wenn der Vorgang abgebrochen wird, und delegiert die Verarbeitung an
-  /// [_processImage]. Beide Quellen durchlaufen identisch die OCR-Pipeline
-  /// und die Thumbnail-Speicherlogik.
+  /// Für jedes ausgewählte Bild wird sofort ein Platzhalter-[Receipt] mit
+  /// `status: 'processing'` und dem temporären Bildpfad erstellt.
+  /// Die eigentliche OCR-Verarbeitung übernimmt der [ProcessorService].
+  ///
+  /// Gibt eine leere Liste zurück, wenn der Vorgang abgebrochen wird.
+  Future<List<Receipt>> pickMultipleImages() async {
+    final List<XFile> imageFiles = await _picker.pickMultiImage(
+      imageQuality: 90,
+    );
+
+    if (imageFiles.isEmpty) return [];
+
+    final now = DateTime.now();
+    return imageFiles
+        .map(
+          (f) => Receipt(
+            id: _uuid.v4(),
+            date: now,
+            totalAmount: 0.0,
+            items: const [],
+            imagePath: f.path,
+            status: 'processing',
+            progress: 0.0,
+          ),
+        )
+        .toList();
+  }
+
+  /// Gemeinsame Implementierung für Kamera- und Galerie-Import.
   Future<Receipt?> _pickAndProcess(ImageSource source) async {
     final XFile? imageFile = await _picker.pickImage(
       source: source,
@@ -876,7 +904,7 @@ class OcrService {
 
     // Parsing im Background-Isolate ausführen, damit der UI-Thread
     // (insbesondere der CircularProgressIndicator) nicht blockiert wird
-    final result = await compute(_parseOcrText, {
+    final result = await compute(parseOcrText, {
       'text': fullText,
       'categoryData': categoryData,
     });

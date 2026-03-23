@@ -1014,6 +1014,10 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   /// `true`: Positionen werden als editierbare TextFields mit Lösch-Icons angezeigt.
   bool _isEditing = false;
 
+  /// Lokale Kopie des Gesamtbetrags, der im Edit-Modus durch die
+  /// „Summe aus Artikeln berechnen"-Funktion überschrieben werden kann.
+  late double _editedTotalAmount;
+
   /// Formatiert Preise im deutschen Dezimalformat (z. B. "1,95") für die
   /// Eingabefelder – getrennt vom [widget.currencyFormat], das das €-Symbol
   /// enthält und für die Anzeige genutzt wird.
@@ -1022,22 +1026,32 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   @override
   void initState() {
     super.initState();
+    _editedTotalAmount = widget.receipt.totalAmount;
     _initControllers(widget.receipt.items);
   }
 
   /// Initialisiert je einen Name- und Preis-Controller pro Artikel.
+  ///
+  /// Hängt an jeden Preis-Controller einen Listener, damit die Abweichungs-
+  /// Warnung sofort aktualisiert wird, wenn der Nutzer Preise eintippt.
   void _initControllers(List<String> items) {
     _nameControllers = [];
     _priceControllers = [];
     for (final item in items) {
       final (:name, :price) = parseLineItem(item);
       _nameControllers.add(TextEditingController(text: name));
-      _priceControllers.add(
-        TextEditingController(
-          text: price != null ? _deDecimalFormat.format(price) : '',
-        ),
+      final priceCtrl = TextEditingController(
+        text: price != null ? _deDecimalFormat.format(price) : '',
       );
+      priceCtrl.addListener(_onPriceChanged);
+      _priceControllers.add(priceCtrl);
     }
+  }
+
+  /// Wird bei jeder Änderung eines Preis-Felds aufgerufen und löst ein
+  /// Neu-Rendern aus, damit die Abweichungs-Farbe live aktualisiert wird.
+  void _onPriceChanged() {
+    if (_isEditing && mounted) setState(() {});
   }
 
   @override
@@ -1045,6 +1059,38 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     for (final c in _nameControllers) c.dispose();
     for (final c in _priceControllers) c.dispose();
     super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Summen-Logik
+  // ---------------------------------------------------------------------------
+
+  /// Summiert die eingetragenen Preise aller Positionen.
+  ///
+  /// Akzeptiert sowohl Komma als auch Punkt als Dezimaltrenner.
+  /// Das Ergebnis wird auf 2 Nachkommastellen gerundet.
+  double _computeItemsTotal() {
+    double total = 0.0;
+    for (final c in _priceControllers) {
+      final val = double.tryParse(c.text.trim().replaceAll(',', '.'));
+      if (val != null) total += val;
+    }
+    return (total * 100).round() / 100.0;
+  }
+
+  /// Fügt eine neue leere Position am Ende der Liste hinzu.
+  void _addItem() {
+    final priceCtrl = TextEditingController();
+    priceCtrl.addListener(_onPriceChanged);
+    setState(() {
+      _nameControllers.add(TextEditingController());
+      _priceControllers.add(priceCtrl);
+    });
+  }
+
+  /// Überschreibt den Gesamtbetrag mit der berechneten Summe der Artikel.
+  void _syncTotalFromItems() {
+    setState(() => _editedTotalAmount = _computeItemsTotal());
   }
 
   /// Entfernt einen Artikel anhand seines Index aus der Liste.
@@ -1073,7 +1119,10 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
         newItems.add(priceText.isNotEmpty ? '$name  $priceText' : name);
       }
 
-      final updatedReceipt = widget.receipt.copyWith(items: newItems);
+      final updatedReceipt = widget.receipt.copyWith(
+        items: newItems,
+        totalAmount: _editedTotalAmount,
+      );
       await widget.databaseService.insertReceipt(updatedReceipt);
 
       if (mounted) {
@@ -1102,6 +1151,12 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
 
   @override
   Widget build(BuildContext context) {
+    // Pre-compute once per build so all widgets share the same values.
+    final itemsTotal = _computeItemsTotal();
+    final mismatch = _isEditing &&
+        itemsTotal > 0.005 &&
+        (itemsTotal - _editedTotalAmount).abs() > 0.005;
+
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
       maxChildSize: 0.95,
@@ -1137,15 +1192,38 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                   // Betrag, Datum und Edit/Save-Icon
                   Row(
                     children: [
+                      // Gesamtbetrag – orange wenn Abweichung im Edit-Modus
                       Expanded(
-                        child: Text(
-                          widget.currencyFormat.format(
-                            widget.receipt.totalAmount,
-                          ),
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.bold),
+                        child: Row(
+                          children: [
+                            Text(
+                              widget.currencyFormat.format(_editedTotalAmount),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: mismatch
+                                        ? Colors.orange[700]
+                                        : null,
+                                  ),
+                            ),
+                            // Warn-Icon bei Abweichung
+                            if (mismatch) ...[
+                              const SizedBox(width: 4),
+                              Tooltip(
+                                message:
+                                    'Summe der Artikel '
+                                    '(${widget.currencyFormat.format(itemsTotal)}) '
+                                    'weicht ab',
+                                child: Icon(
+                                  Icons.warning_amber_outlined,
+                                  color: Colors.orange[700],
+                                  size: 18,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                       Text(
@@ -1198,7 +1276,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
             // Scrollbare Artikel-Liste
             // ------------------------------------------------------------------
             Expanded(
-              child: _nameControllers.isEmpty
+              child: _nameControllers.isEmpty && !_isEditing
                   ? Center(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1216,11 +1294,18 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                   : ListView.separated(
                       controller: scrollController,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _nameControllers.length,
+                      // +1 für den Edit-Footer (Hinzufügen + Sync-Button)
+                      itemCount:
+                          _nameControllers.length + (_isEditing ? 1 : 0),
                       separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, index) => _isEditing
-                          ? _buildEditItemRow(context, index)
-                          : _buildViewItemRow(context, index),
+                      itemBuilder: (_, index) {
+                        if (_isEditing && index == _nameControllers.length) {
+                          return _buildEditFooter(context);
+                        }
+                        return _isEditing
+                            ? _buildEditItemRow(context, index)
+                            : _buildViewItemRow(context, index);
+                      },
                     ),
             ),
           ],
@@ -1331,6 +1416,30 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
             tooltip: 'Position entfernen',
             color: Theme.of(context).colorScheme.error,
             onPressed: () => _deleteItem(index),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Footer der editierbaren Liste mit „+ Position hinzufügen" und
+  /// „Summe aus Artikeln berechnen"-Buttons.
+  Widget _buildEditFooter(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OutlinedButton.icon(
+            icon: const Icon(Icons.add),
+            label: const Text('Position hinzufügen'),
+            onPressed: _addItem,
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.calculate_outlined),
+            label: const Text('Summe aus Artikeln berechnen'),
+            onPressed: _syncTotalFromItems,
           ),
         ],
       ),

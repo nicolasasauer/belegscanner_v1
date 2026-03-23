@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
+import 'pages/dashboard_page.dart';
 import 'pages/home_page.dart';
+import 'services/database_service.dart';
 
 /// Einstiegspunkt der Bong-Scanner-App.
 void main() {
@@ -84,7 +86,55 @@ class BongScannerApp extends StatelessWidget {
         colorSchemeSeed: Colors.indigo,
         brightness: Brightness.dark,
       ),
-      home: const HomePage(),
+      home: const AppShell(),
+    );
+  }
+}
+
+// =============================================================================
+// App-Shell mit Tab-Navigation
+// =============================================================================
+
+/// Haupt-Shell der App mit [BottomNavigationBar] zum Wechsel zwischen
+/// Belegliste und Dashboard.
+class AppShell extends StatefulWidget {
+  const AppShell({super.key});
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  int _currentIndex = 0;
+  final DatabaseService _databaseService = DatabaseService();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          HomePage(databaseService: _databaseService),
+          DashboardPage(databaseService: _databaseService),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (index) =>
+            setState(() => _currentIndex = index),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            selectedIcon: Icon(Icons.receipt_long),
+            label: 'Belegliste',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.pie_chart_outline),
+            selectedIcon: Icon(Icons.pie_chart),
+            label: 'Dashboard',
+          ),
+        ],
+      ),
     );
   }
 }

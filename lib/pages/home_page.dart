@@ -17,7 +17,11 @@ import 'category_management_page.dart';
 /// Zeigt eine gefilterte Liste der gescannten Belege und ermöglicht
 /// das Starten eines neuen Scans über den FloatingActionButton.
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.databaseService});
+
+  /// Optionaler gemeinsam genutzter Datenbankservice.
+  /// Wenn null, wird eine eigene Instanz erstellt.
+  final DatabaseService? databaseService;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -59,7 +63,7 @@ class _HomePageState extends State<HomePage> {
   // Services & Formatter
   // ---------------------------------------------------------------------------
 
-  final DatabaseService _databaseService = DatabaseService();
+  late final DatabaseService _databaseService;
   late final OcrService _ocrService;
 
   /// Formatter für Euro-Beträge (z. B. "12,50 €").
@@ -78,6 +82,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _databaseService = widget.databaseService ?? DatabaseService();
     _ocrService = OcrService(databaseService: _databaseService);
     // Android 16 killt Apps, die im ersten Frame zu viel CPU beanspruchen.
     // Kleine Verzögerung gibt dem Framework Zeit, den ersten Frame zu rendern,

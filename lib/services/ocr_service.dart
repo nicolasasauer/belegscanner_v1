@@ -185,7 +185,7 @@ double parseAmountImpl(String text) {
   final lines = text.split('\n');
   for (int i = 0; i < lines.length; i++) {
     final line = lines[i].trim();
-    if (RegExp(r'\b(?:SUMME|TOTAL)\b', caseSensitive: false).hasMatch(line)) {
+    if (RegExp(r'\b(?:SUMME|TOTAL)\b(?!-)', caseSensitive: false).hasMatch(line)) {
       // Preis direkt auf derselben Zeile
       final sameLine = pricePattern.firstMatch(line);
       if (sameLine != null) {

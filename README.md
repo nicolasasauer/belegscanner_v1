@@ -6,10 +6,10 @@ Eine Flutter-App für Android zum **Einscannen**, **Speichern**, **Durchsuchen**
 
 ## Screenshots
 
-| Leere Startseite | Beleg-Liste | Beleg-Detail |
-|:---:|:---:|:---:|
-| ![Leere Startseite](https://github.com/user-attachments/assets/16902a92-0bb3-4263-9ec2-9509956fc4aa) | ![Beleg-Liste](https://github.com/user-attachments/assets/6d3c4bc8-3570-4b74-b7de-98005410f16d) | ![Beleg-Detail](https://github.com/user-attachments/assets/355493cb-3996-48d5-a021-cb206d5d00a4) |
-| Startbildschirm ohne Belege | Gefilterte Beleg-Liste mit Datum-FilterChips | Detail-BottomSheet mit erkannten Positionen und Einzelpreisen |
+| Leere Startseite | Beleg-Liste | Scan-Vorgang | Beleg-Detail |
+|:---:|:---:|:---:|:---:|
+| ![Leere Startseite](screenshots/screenshot_01_empty.png) | ![Beleg-Liste](screenshots/screenshot_02_list.png) | ![Scan-Vorgang](screenshots/screenshot_03_scanning.png) | ![Beleg-Detail](screenshots/screenshot_04_detail.png) |
+| Startbildschirm ohne Belege | Gefilterte Beleg-Liste mit Datum-FilterChips | Kamera-Scanner in Aktion | Detail-BottomSheet mit erkannten Positionen und Einzelpreisen |
 
 ---
 
@@ -18,15 +18,19 @@ Eine Flutter-App für Android zum **Einscannen**, **Speichern**, **Durchsuchen**
 | # | Feature | Beschreibung |
 |---|---|---|
 | 📷 | **On-Device OCR** | Belege per Kamera fotografieren – Text wird lokal mit Google ML Kit erkannt, kein Bild verlässt das Gerät |
-| 🗄️ | **SQLite-Persistenz** | Alle Belege (Datum, Betrag, Artikel, Bildpfad) werden dauerhaft in einer lokalen SQLite-Datenbank gespeichert und überleben jeden App-Neustart |
-| 🖼️ | **Bild-Thumbnail** | Das Originalbild jedes Belegs wird permanent im App-eigenen Dokumenten-Verzeichnis gespeichert und als Thumbnail direkt in der Liste angezeigt |
-| 💶 | **Automatische Betragserkennung** | Regex-basiertes Parsing nach `Summe`, `Gesamtbetrag`, `Zahlbetrag`, `Total` und `€` – mit intelligentem Fallback |
-| 🧾 | **Verbesserte Artikelerkennung** | Header-Daten (GmbH, PLZ, Adresse, Telefon, Datum, Uhrzeit) werden gefiltert; OCR-Artefakte wie Junk-Präfixe (z. B. „CnBio") werden automatisch bereinigt |
+| 🗄️ | **SQLite-Persistenz** | Alle Belege (Datum, Betrag, Artikel, Bildpfad, Kategorien, OCR-Rohtext) werden dauerhaft in einer lokalen SQLite-Datenbank gespeichert und überleben jeden App-Neustart |
+| 🖼️ | **Bild-Thumbnail & Vollbild** | Das Originalbild jedes Belegs wird permanent im App-eigenen Dokumenten-Verzeichnis gespeichert; Thumbnail in der Liste, Vollbild-Ansicht per Antippen im Detail-Sheet |
+| 💶 | **Automatische Betragserkennung** | 3-stufige Priorisierung: erst `SUMME`/`TOTAL` zeilenweise, dann andere Gesamt-Keywords per Regex, dann `EUR`/`€`-Muster – verhindert, dass Kassenbonendzeilen den Hauptbetrag überschreiben |
+| 🧾 | **Verbesserte Artikelerkennung** | Header-Cut (erster Datums-/Uhrzeiteintrag), Footer-Cut (SUMME/TOTAL/GESAMT), Garbage-Filter (Sonderzeichen, URLs, 15+-stellige Zahlen); 3-Zeilen-Artikel (Name → Mengenberechnung → Preis) werden korrekt zusammengeführt |
+| ✏️ | **Beleg bearbeiten** | Im Detail-BottomSheet können Artikelnamen und Preise direkt bearbeitet, neue Positionen hinzugefügt und einzelne Einträge gelöscht werden |
+| 🏷️ | **Artikel-Kategorien** | Jede Einzelposition kann im Bearbeitungs-Modus einer Kategorie zugewiesen werden: *Lebensmittel*, *Drogerie*, *Freizeit*, *Transport*, *Sonstiges* – wird in der Datenbank persistent gespeichert |
+| 🔢 | **Summe aus Artikeln berechnen** | Ein Knopfdruck im Bearbeitungs-Modus berechnet den Gesamtbetrag automatisch aus der Summe der eingetragenen Einzelpreise; eine Abweichungswarnung (🔶) weist auf Differenzen hin |
 | 🔍 | **Volltextsuche** | Belege nach Händlername, Betrag oder Stichwörtern in den Einzelpositionen durchsuchen |
 | 🗂️ | **Datum-Filter** | Belege nach Tag, Monat und Jahr filtern – kombinierbare FilterChips |
 | 📤 | **CSV-Export** | Alle Belege als RFC-4180-konforme CSV-Datei exportieren und per Share-Sheet (E-Mail, Messenger, Cloud) teilen |
 | 📥 | **Galerie-Import** | Vorhandene Bonfotos aus der Gerätegalerie importieren – identische OCR-Pipeline wie Kamera-Scan |
 | 🗑️ | **Sicheres Löschen** | Belege per Wisch-Geste löschen – Datenbankeintrag UND Bilddatei werden vollständig entfernt |
+| 🐛 | **Raw-OCR-Debug-Modus** | Easter Egg: 5-maliges schnelles Antippen (< 2 s) des Belegbilds öffnet ein BottomSheet mit dem vollständigen OCR-Rohtext – ideal zur Fehleranalyse, Rohtext lässt sich in die Zwischenablage kopieren |
 | 🌙 | **Material 3** | Light- und Dark-Theme, dynamische Indigo-Farbpalette |
 | 🌍 | **Deutsches Locale** | Euro-Formatierung (`42,50 €`) und deutsche Monatsnamen |
 
@@ -71,20 +75,34 @@ Der Bong-Scanner wurde von Grund auf nach dem **Local-First**-Prinzip entwickelt
 lib/
 ├── main.dart                      # App-Einstiegspunkt, BongScannerApp, Material-3-Theme
 ├── models/
-│   └── receipt.dart               # Receipt-Datenmodell (id, date, totalAmount, items, imagePath)
+│   └── receipt.dart               # Receipt-Datenmodell (id, date, totalAmount, items,
+│                                  #   categories, imagePath, rawText)
 ├── services/
 │   ├── ocr_service.dart           # OCR-Logik: Kamera/Galerie → ML Kit → Parsing (Background-Isolate)
-│   └── database_service.dart      # SQLite-Persistenz: CRUD-Operationen für Belege
+│   └── database_service.dart      # SQLite-Persistenz v4: CRUD-Operationen für Belege
 └── pages/
-    └── home_page.dart             # Haupt-Screen: Filter-Bar, ListView, FAB Speed-Dial, CSV-Export
+    └── home_page.dart             # Haupt-Screen: Filter-Bar, ListView, FAB Speed-Dial,
+                                   #   CSV-Export, Detail-BottomSheet mit Bearbeitungs-Modus
 ```
+
+### Datenmodell `Receipt`
+
+| Feld | Typ | Beschreibung |
+|---|---|---|
+| `id` | `String` | UUID v4 – kollisionsfreie Beleg-ID |
+| `date` | `DateTime` | Erkanntes Belegdatum |
+| `totalAmount` | `double` | Gesamtbetrag in Euro |
+| `items` | `List<String>` | Erkannte Einzelposten (Format: `"Name  Preis"`) |
+| `categories` | `List<String>` | Kategorien parallel zu `items`; Fallback: `"Sonstiges"` |
+| `imagePath` | `String?` | Pfad zum gespeicherten Belegbild (kann `null` sein) |
+| `rawText` | `String?` | Vollständiger OCR-Rohtext vor jeder Filterung (DB v4) |
 
 ### Datenfluss
 
 ```
 App-Start
     └─► _loadReceipts()
-            └─► DatabaseService.getAllReceipts()  ──► SQLite (sqflite)
+            └─► DatabaseService.getAllReceipts()  ──► SQLite v4 (sqflite)
                     └─► Receipt-Liste → setState → ListView
 
 FAB → Kamera / Galerie
@@ -92,13 +110,22 @@ FAB → Kamera / Galerie
             ├─► ImagePicker (Kamera oder Galerie)
             ├─► GoogleMlKit TextRecognizer  (Haupt-Isolate, on-device)
             ├─► compute(_parseOcrText)      (Background-Isolate)
-            │       ├─► _parseAmount()   (Schlüsselwort-Regex + Fallback)
-            │       └─► _parseItems()    (Header-Filter, Junk-Stripping,
-            │                             Mindestlänge, Zeichentyp-Filter)
+            │       ├─► _parseAmount()   (3-stufig: SUMME/TOTAL → Keywords → EUR/€ → Max-Fallback)
+            │       └─► _parseItems()    (Header-Cut, Footer-Cut, Garbage-Filter,
+            │                             3-Zeilen-Artikel, Steuerklassen-Suffix-Strip)
             ├─► _persistImage()            (Bild dauerhaft im App-Verzeichnis)
-            └─► Receipt-Objekt
+            └─► Receipt-Objekt (inkl. rawText + leere categories)
                     └─► DatabaseService.insertReceipt()  ──► SQLite
                             └─► setState → ListView
+
+Detail-BottomSheet (Bearbeitungs-Modus)
+    └─► _saveChanges()
+            ├─► Receipt.copyWith(items, categories, totalAmount)
+            └─► DatabaseService.insertReceipt()  ──► SQLite (Upsert)
+                    └─► onSaved-Callback → setState
+
+Easter Egg: 5 Taps in < 2 s auf Belegbild
+    └─► _showRawOcrSheet()  ──► Receipt.rawText als scrollbarer Monospace-Text
 
 Wisch-zum-Löschen
     └─► _deleteReceipt()
@@ -153,8 +180,8 @@ flutter test
 ```
 
 Die Tests in `test/receipt_test.dart` prüfen:
-- Erstellung und `copyWith` des `Receipt`-Datenmodells
-- SQLite-Serialisierung (`toMap` / `fromMap`) mit Roundtrip-Test
+- Erstellung und `copyWith` des `Receipt`-Datenmodells (inkl. `categories` und `rawText`)
+- SQLite-Serialisierung (`toMap` / `fromMap`) mit Roundtrip-Test und Rückwärtskompatibilität für Altdaten
 - Filter-Logik (nach Tag, Monat, Jahr und Kombinationen)
 
 ---

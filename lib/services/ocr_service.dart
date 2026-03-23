@@ -17,6 +17,75 @@ import '../models/receipt.dart';
 /// ermittelt werden kann (Preis-Anker-Logik).
 const String kUnknownItemName = 'Unbekannter Artikel';
 
+// ---------------------------------------------------------------------------
+// Normalisierung und Kategorisierung
+// ---------------------------------------------------------------------------
+
+/// Normalisiert einen Artikelnamen:
+///   - Überflüssige Leerzeichen werden entfernt.
+///   - Der Name wird in „Title Case" umgewandelt (erster Buchstabe jedes
+///     Wortes groß, Rest klein).
+///
+/// Beispiele:
+/// - "  RED   BULL  " → "Red Bull"
+/// - "dmBio Tofu Rosso 200g" → "Dmbio Tofu Rosso 200g"
+/// - "VOLLKORNBROT 750G" → "Vollkornbrot 750g"
+@visibleForTesting
+String normalizeName(String name) {
+  final trimmed = name.trim().replaceAll(_whitespaceRunRegex, ' ');
+  return trimmed.split(' ').map((word) {
+    if (word.isEmpty) return word;
+    return word[0].toUpperCase() + word.substring(1).toLowerCase();
+  }).join(' ');
+}
+
+/// Hilfs-Regex: erkennt aufeinanderfolgende Leerzeichen (für [normalizeName]).
+final RegExp _whitespaceRunRegex = RegExp(r'\s+');
+
+/// Schlüsselwort-zu-Kategorie-Zuordnung für die automatische Kategorisierung.
+///
+/// Der Vergleich ist nicht case-sensitiv. Wenn ein Artikelname eines dieser
+/// Schlüsselwörter enthält, wird die entsprechende Kategorie gesetzt.
+const Map<String, String> categoryMap = {
+  'Bio': 'Lebensmittel',
+  'Tofu': 'Lebensmittel',
+  'Milch': 'Lebensmittel',
+  'Brot': 'Lebensmittel',
+  'Obst': 'Lebensmittel',
+  'Gemüse': 'Lebensmittel',
+  'Shampoo': 'Drogerie',
+  'Zahnpasta': 'Drogerie',
+  'Duschgel': 'Drogerie',
+  'Balea': 'Drogerie',
+  'Hygiene': 'Drogerie',
+  'Pfand': 'Pfand',
+  'Leergut': 'Pfand',
+  'Red Bull': 'Getränke',
+  'Cola': 'Getränke',
+  'Wasser': 'Getränke',
+  'Saft': 'Getränke',
+};
+
+/// Ermittelt die Kategorie eines Artikelnamens anhand von [categoryMap].
+///
+/// Gibt „Sonstiges" zurück, wenn kein Schlüsselwort übereinstimmt.
+///
+/// Beispiele:
+/// - "Dmbio Tofu Rosso 200g" → "Lebensmittel"
+/// - "Pfand 0,25" → "Pfand"
+/// - "Red Bull" → "Getränke"
+/// - "Kugelschreiber" → "Sonstiges"
+@visibleForTesting
+String categorizeItem(String name) {
+  final lowerName = name.toLowerCase();
+  for (final entry in categoryMap.entries) {
+    if (lowerName.contains(entry.key.toLowerCase())) {
+      return entry.value;
+    }
+  }
+  return 'Sonstiges';
+}
+
 /// Compiled Regex: Preis am Ende einer OCR-Einzelposten-Zeile.
 ///
 /// Erkennt z. B. "BROT 750G  2,99", "MILCH 1L 1,49 A" oder
@@ -535,12 +604,33 @@ List<String> parseItemsImpl(String text) {
   return result;
 }
 
-/// Top-level-Funktion für [compute]: Parst OCR-Text und gibt Betrag und
-/// Artikel-Liste zurück.
+/// Top-level-Funktion für [compute]: Parst OCR-Text und gibt Betrag,
+/// normalisierte Artikel-Liste und Kategorien zurück.
+///
+/// Nach dem Extrahieren der Artikel werden [normalizeName] und
+/// [categorizeItem] auf jeden Artikel angewendet, sodass die zurückgegebenen
+/// Items bereits normalisierte Namen tragen und die Kategorien-Liste parallel
+/// befüllt ist.
 Map<String, dynamic> _parseOcrText(String text) {
+  final rawItems = parseItemsImpl(text);
+  final normalizedItems = <String>[];
+  final categories = <String>[];
+
+  for (final item in rawItems) {
+    final (:name, :price) = parseLineItem(item);
+    final normalizedName = normalizeName(name);
+    categories.add(categorizeItem(normalizedName));
+    if (price != null) {
+      normalizedItems.add('$normalizedName  ${_formatPriceComma(price)}');
+    } else {
+      normalizedItems.add(normalizedName);
+    }
+  }
+
   return {
     'amount': parseAmountImpl(text),
-    'items': parseItemsImpl(text),
+    'items': normalizedItems,
+    'categories': categories,
   };
 }
 
@@ -623,6 +713,7 @@ class OcrService {
       date: DateTime.now(),
       totalAmount: result['amount'] as double,
       items: List<String>.from(result['items'] as List),
+      categories: List<String>.from(result['categories'] as List),
       imagePath: permanentImagePath,
       rawText: fullText.isEmpty ? null : fullText,
     );

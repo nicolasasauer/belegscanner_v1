@@ -699,4 +699,104 @@ void main() {
       expect(price, closeTo(2.25, 0.001));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Tests für normalizeName – Text-Normalisierung
+  // ---------------------------------------------------------------------------
+
+  group('normalizeName', () {
+    test('Wandelt Großbuchstaben in Title Case um', () {
+      expect(normalizeName('RED BULL'), equals('Red Bull'));
+    });
+
+    test('Wandelt Kleinbuchstaben in Title Case um', () {
+      expect(normalizeName('vollkornbrot'), equals('Vollkornbrot'));
+    });
+
+    test('Entfernt führende und abschließende Leerzeichen', () {
+      expect(normalizeName('  Brot  '), equals('Brot'));
+    });
+
+    test('Reduziert mehrfache Leerzeichen auf eines', () {
+      expect(normalizeName('Bio  Milch   1L'), equals('Bio Milch 1l'));
+    });
+
+    test('Bewahrt Ziffern im Namen (z. B. "750g")', () {
+      expect(normalizeName('VOLLKORNBROT 750G'), equals('Vollkornbrot 750g'));
+    });
+
+    test('Leerer Name bleibt leer', () {
+      expect(normalizeName(''), equals(''));
+    });
+
+    test('Einzelnes Wort wird korrekt umgewandelt', () {
+      expect(normalizeName('MILCH'), equals('Milch'));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests für categorizeItem – Automatische Kategorisierung
+  // ---------------------------------------------------------------------------
+
+  group('categorizeItem', () {
+    test('"Tofu" → Lebensmittel', () {
+      expect(categorizeItem('Dmbio Tofu Rosso 200g'), equals('Lebensmittel'));
+    });
+
+    test('"Milch" → Lebensmittel', () {
+      expect(categorizeItem('Vollmilch 1L'), equals('Lebensmittel'));
+    });
+
+    test('"Brot" → Lebensmittel', () {
+      expect(categorizeItem('Vollkornbrot 750g'), equals('Lebensmittel'));
+    });
+
+    test('"Bio" → Lebensmittel', () {
+      expect(categorizeItem('Dmbio Fruchtaufstrich'), equals('Lebensmittel'));
+    });
+
+    test('"Shampoo" → Drogerie', () {
+      expect(categorizeItem('Balea Shampoo 300ml'), equals('Drogerie'));
+    });
+
+    test('"Balea" → Drogerie', () {
+      expect(categorizeItem('Balea Duschgel'), equals('Drogerie'));
+    });
+
+    test('"Pfand" → Pfand', () {
+      expect(categorizeItem('Pfand'), equals('Pfand'));
+    });
+
+    test('"Leergut" → Pfand', () {
+      expect(categorizeItem('Leergut 0,25'), equals('Pfand'));
+    });
+
+    test('"Red Bull" → Getränke (case-insensitive)', () {
+      expect(categorizeItem('Red Bull'), equals('Getränke'));
+    });
+
+    test('"Wasser" → Getränke', () {
+      expect(categorizeItem('Wasser Still 1l'), equals('Getränke'));
+    });
+
+    test('"Cola" → Getränke', () {
+      expect(categorizeItem('Cola 1,5l'), equals('Getränke'));
+    });
+
+    test('"Saft" → Getränke', () {
+      expect(categorizeItem('Apfelsaft'), equals('Getränke'));
+    });
+
+    test('Unbekannter Artikel → Sonstiges', () {
+      expect(categorizeItem('Kugelschreiber'), equals('Sonstiges'));
+    });
+
+    test('Leerer String → Sonstiges', () {
+      expect(categorizeItem(''), equals('Sonstiges'));
+    });
+
+    test('Vergleich ist nicht case-sensitiv ("MILCH" → Lebensmittel)', () {
+      expect(categorizeItem('MILCH'), equals('Lebensmittel'));
+    });
+  });
 }

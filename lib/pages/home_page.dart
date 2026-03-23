@@ -985,8 +985,9 @@ class _ReceiptListTile extends StatelessWidget {
 
 /// Compiled Regex: Preis am Ende einer OCR-Einzelposten-Zeile.
 ///
-/// Erkennt z. B. "BROT 750G  2,99" oder "MILCH 1L 1,49 A".
-final _lineItemPriceRegex = RegExp(r'\s+(\d{1,4}[.,]\d{2})\s*[A-Za-z]?\s*$');
+/// Erkennt z. B. "BROT 750G  2,99", "MILCH 1L 1,49 A" oder
+/// "dmBio Tofu Rosso 200g 1,65 2" (Tax-Code am Ende ist Buchstabe oder Ziffer).
+final _lineItemPriceRegex = RegExp(r'\s+(\d{1,4}[.,]\d{2})\s*[A-Za-z0-9]?\s*$');
 
 /// Parst eine OCR-Zeile in einen Artikelnamen und einen optionalen Preis.
 ///
@@ -1028,6 +1029,12 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   late List<TextEditingController> _nameControllers;
   late List<TextEditingController> _priceControllers;
   bool _isSaving = false;
+
+  /// Gibt an, ob die Detailansicht im Bearbeitungs-Modus ist.
+  ///
+  /// `false` (Standard): Positionen werden als saubere Text-Labels angezeigt.
+  /// `true`: Positionen werden als editierbare TextFields mit Lösch-Icons angezeigt.
+  bool _isEditing = false;
 
   /// Formatiert Preise im deutschen Dezimalformat (z. B. "1,95") für die
   /// Eingabefelder – getrennt vom [widget.currencyFormat], das das €-Symbol
@@ -1093,6 +1100,7 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
 
       if (mounted) {
         widget.onSaved(updatedReceipt);
+        setState(() => _isEditing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Änderungen gespeichert.')),
         );
@@ -1148,23 +1156,45 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                     ),
                   ),
 
-                  // Betrag und Datum
+                  // Betrag, Datum und Edit/Save-Icon
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        widget.currencyFormat.format(
-                          widget.receipt.totalAmount,
+                      Expanded(
+                        child: Text(
+                          widget.currencyFormat.format(
+                            widget.receipt.totalAmount,
+                          ),
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
                         ),
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineMedium
-                            ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       Text(
                         widget.dateFormat.format(widget.receipt.date),
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
+                      const SizedBox(width: 8),
+                      // Bearbeiten / Speichern-Icon
+                      _isEditing
+                          ? IconButton(
+                              icon: _isSaving
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.check),
+                              tooltip: 'Änderungen speichern',
+                              onPressed: _isSaving ? null : _saveChanges,
+                            )
+                          : IconButton(
+                              icon: const Icon(Icons.edit_outlined),
+                              tooltip: 'Bearbeiten',
+                              onPressed: () =>
+                                  setState(() => _isEditing = true),
+                            ),
                     ],
                   ),
 
@@ -1210,29 +1240,10 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       itemCount: _nameControllers.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, index) => _buildItemRow(context, index),
+                      itemBuilder: (_, index) => _isEditing
+                          ? _buildEditItemRow(context, index)
+                          : _buildViewItemRow(context, index),
                     ),
-            ),
-
-            // ------------------------------------------------------------------
-            // Speichern-Button (immer sichtbar)
-            // ------------------------------------------------------------------
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _isSaving ? null : _saveChanges,
-                  icon: _isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.save_outlined),
-                  label: const Text('Speichern'),
-                ),
-              ),
             ),
           ],
         );
@@ -1282,8 +1293,26 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     );
   }
 
+  /// Schreibgeschützte Zeile für einen Artikel (Name + Preis als Text-Labels).
+  Widget _buildViewItemRow(BuildContext context, int index) {
+    final name = _nameControllers[index].text;
+    final priceText = _priceControllers[index].text.trim();
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(name),
+      trailing: priceText.isNotEmpty
+          ? Text(
+              '$priceText €',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+            )
+          : null,
+    );
+  }
+
   /// Editierbare Zeile für einen Artikel (Name + Preis + Löschen-Button).
-  Widget _buildItemRow(BuildContext context, int index) {
+  Widget _buildEditItemRow(BuildContext context, int index) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(

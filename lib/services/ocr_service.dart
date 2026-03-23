@@ -52,11 +52,12 @@ double _parseAmountImpl(String text) {
 /// Angewendete Filter-Schritte:
 ///   1. Header-, Meta-, Zahlungs- und Summenzeilen werden per Regex-
 ///      Ausschlussliste entfernt (z. B. GmbH, PLZ, Telefon, Summe, MwSt,
-///      EUR, Zahlung, Visa, Werbe-Slogans).
+///      EUR, Zahlung, Visa, Payback, Werbe-Slogans).
 ///   2. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio", "dnBio")
 ///      werden gestripped, sodass der Artikelname erhalten bleibt.
-///   3. Zeilen mit weniger als 4 Buchstaben werden gefiltert.
-///   4. Zeilen mit mehr als 50 % Ziffern und Sonderzeichen werden gefiltert.
+///   3. Nur Zeilen mit einem Dezimalpreis-Muster (z. B. "1,65" oder "2.99")
+///      werden als Artikel erkannt – reine Text-Zeilen (Adressen, Slogans)
+///      werden damit automatisch aussortiert.
 List<String> _parseItemsImpl(String text) {
   // 1. Ausschlussmuster für typische Bon-Header, Meta-Daten, Summen- und
   //    Zahlungszeilen sowie Werbe-Slogans.
@@ -64,8 +65,8 @@ List<String> _parseItemsImpl(String text) {
     // Rechtsformen / Firmenbezeichnungen
     r'GmbH|OHG|e\.K\.|'
     r'(?:^|\s)(?:AG|KG|eG)(?:\s|$)|e\.V\.|'
-    // Adresse / Postleitzahl
-    r'\b\d{5}\b|Str\.|Stra[ßs]e|'
+    // Adresse / Postleitzahl / Straße
+    r'\b\d{5}\b|Str\.|Stra[ßs]e|Gasse|Platz|Marktgraben|'
     // Telefon / Fax / Internet
     r'Tel\.?:?\s*[\d\s\-/()]{5,}|Telefon|Fax|'
     r'www\.\S+|https?://|'
@@ -86,6 +87,8 @@ List<String> _parseItemsImpl(String text) {
     r'\bZahlung\b|\bBargeld\b|\bBar\b|\bGegeben\b|'
     r'\bRückgeld\b|\bWechselgeld\b|'
     r'\bVisa\b|\bMastercard\b|\bMaestro\b|\bEC-Karte\b|\bKartenzahlung\b|'
+    // Kundenbindungsprogramme
+    r'\bPayback\b|\bBonus\b|\bPunkte\b|\bCoupon\b|\bGutschein\b|'
     // Kasseninformationen
     r'\bKassennummer\b|\bBonnummer\b|\bKassenbon\b|\bBon-Nr\b|\bKassen-ID\b|'
     // Grußformeln / Werbe-Slogans
@@ -99,9 +102,14 @@ List<String> _parseItemsImpl(String text) {
   // 2. OCR-Junk-Präfixe (z. B. 'CnBio', 'unBio', 'dnBio', 'xnBio')
   final RegExp junkPrefixPattern = RegExp(r'^[A-Za-z]nBio\s+');
 
-  // Hilfsmuster für die Buchstaben- und Sonderzeichen-Filter
-  final RegExp letterPattern = RegExp(r'[A-Za-zÄÖÜäöüß]');
-  final RegExp nonLetterNonSpacePattern = RegExp(r'[A-Za-zÄÖÜäöüß\s]');
+  // 3. Artikel-Erkennungsmuster: Zeile muss mindestens einen Dezimalpreis
+  //    enthalten (z. B. "1,65", "2.99") – optionaler Tax-Code am Ende
+  //    (Buchstabe oder Ziffer, z. B. "A", "B", "1", "2").
+  //    \d{1,4}: Unterstützt Preise bis 9999,99 € für z. B. Elektronik oder
+  //    Großmengen-Artikel.
+  final RegExp itemPricePattern = RegExp(
+    r'\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
+  );
 
   return text
       .split('\n')
@@ -111,14 +119,8 @@ List<String> _parseItemsImpl(String text) {
       .where((line) => !headerPattern.hasMatch(line))
       // 2. OCR-Junk-Präfixe am Zeilenanfang strippen
       .map((line) => line.replaceFirst(junkPrefixPattern, '').trim())
-      // 3. Zeilen mit < 4 Buchstaben ausschließen
-      .where((line) => letterPattern.allMatches(line).length >= 4)
-      // 4. Zeilen mit > 50 % Ziffern/Sonderzeichen ausschließen
-      .where((line) {
-        final nonLetterNonSpace =
-            line.replaceAll(nonLetterNonSpacePattern, '').length;
-        return nonLetterNonSpace * 2 <= line.length;
-      })
+      // 3. Nur Zeilen mit Dezimalpreis-Muster als Artikel akzeptieren
+      .where((line) => itemPricePattern.hasMatch(line))
       .toList();
 }
 

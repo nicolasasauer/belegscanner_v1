@@ -1595,13 +1595,38 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     );
   }
 
-  /// Schreibgeschützte Zeile für einen Artikel (Name + Preis als Text-Labels).
+  /// Schreibgeschützte Zeile für einen Artikel (Name + Kategorie-Label + Preis).
   Widget _buildViewItemRow(BuildContext context, int index) {
     final name = _nameControllers[index].text;
     final priceText = _priceControllers[index].text.trim();
+    final category =
+        index < _categories.length ? _categories[index] : 'Sonstiges';
+    final showChip = category != 'Sonstiges';
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      title: Text(name),
+      title: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 6,
+        children: [
+          Text(name),
+          if (showChip)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                category,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSecondaryContainer,
+                    ),
+              ),
+            ),
+        ],
+      ),
       trailing: priceText.isNotEmpty
           ? Text(
               '$priceText €',
@@ -1681,6 +1706,8 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                 items: const [
                   'Lebensmittel',
                   'Drogerie',
+                  'Pfand',
+                  'Getränke',
                   'Freizeit',
                   'Transport',
                   'Sonstiges',

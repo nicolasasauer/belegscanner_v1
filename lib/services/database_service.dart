@@ -13,7 +13,7 @@ import '../models/receipt.dart';
 class DatabaseService {
   static const _dbName = 'belegscanner.db';
   static const _tableName = 'receipts';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -39,7 +39,8 @@ class DatabaseService {
             totalAmount REAL NOT NULL,
             items TEXT NOT NULL,
             categories TEXT NOT NULL DEFAULT '[]',
-            imagePath TEXT
+            imagePath TEXT,
+            rawText TEXT
           )
         ''');
       },
@@ -56,12 +57,13 @@ class DatabaseService {
               totalAmount REAL NOT NULL,
               items TEXT NOT NULL,
               categories TEXT NOT NULL DEFAULT '[]',
-              imagePath TEXT
+              imagePath TEXT,
+              rawText TEXT
             )
           ''');
           await db.execute('''
             INSERT INTO ${_tableName}_new
-              SELECT id, date, totalAmount, items, '[]', imagePath
+              SELECT id, date, totalAmount, items, '[]', imagePath, NULL
               FROM $_tableName
           ''');
           await db.execute('DROP TABLE $_tableName');
@@ -72,6 +74,17 @@ class DatabaseService {
           // Version 2 → Version 3: Kategorien-Spalte hinzufügen.
           await db.execute(
             "ALTER TABLE $_tableName ADD COLUMN categories TEXT NOT NULL DEFAULT '[]'",
+          );
+          // Direkt weiter zu v4 (rawText-Spalte) wenn nötig
+          if (newVersion >= 4) {
+            await db.execute(
+              'ALTER TABLE $_tableName ADD COLUMN rawText TEXT',
+            );
+          }
+        } else if (oldVersion < 4) {
+          // Version 3 → Version 4: Roh-OCR-Text-Spalte hinzufügen.
+          await db.execute(
+            'ALTER TABLE $_tableName ADD COLUMN rawText TEXT',
           );
         }
       },

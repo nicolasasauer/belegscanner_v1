@@ -26,6 +26,13 @@ class Receipt {
   /// (z. B. bei Altdaten oder nach einem fehlgeschlagenen Kopiervorgang).
   final String? imagePath;
 
+  /// Ungefilterte Rohausgabe des OCR-Scans (kompletter Text-Dump).
+  ///
+  /// Dient als Debugging-Gedächtnis: enthält alles, was die KI auf dem Bon
+  /// erkannt hat, bevor der Filter-Algorithmus greift. Kann `null` sein
+  /// bei Altdaten oder wenn die OCR keinen Text zurückgegeben hat.
+  final String? rawText;
+
   const Receipt({
     required this.id,
     required this.date,
@@ -33,6 +40,7 @@ class Receipt {
     required this.items,
     this.categories = const [],
     this.imagePath,
+    this.rawText,
   });
 
   /// Gibt die Kategorie für den Artikel an Index [i] zurück.
@@ -50,6 +58,7 @@ class Receipt {
     List<String>? items,
     List<String>? categories,
     String? imagePath,
+    String? rawText,
   }) {
     return Receipt(
       id: id ?? this.id,
@@ -58,6 +67,7 @@ class Receipt {
       items: items ?? this.items,
       categories: categories ?? this.categories,
       imagePath: imagePath ?? this.imagePath,
+      rawText: rawText ?? this.rawText,
     );
   }
 
@@ -73,6 +83,7 @@ class Receipt {
       'items': jsonEncode(items),
       'categories': jsonEncode(categories),
       'imagePath': imagePath,
+      'rawText': rawText,
     };
   }
 
@@ -96,12 +107,14 @@ class Receipt {
       items: decoded.cast<String>(),
       categories: categories,
       imagePath: map['imagePath'] as String?,
+      rawText: map['rawText'] as String?,
     );
   }
 
   @override
   String toString() {
     return 'Receipt(id: $id, date: $date, totalAmount: $totalAmount, '
-        'items: $items, categories: $categories, imagePath: $imagePath)';
+        'items: $items, categories: $categories, imagePath: $imagePath, '
+        'rawText: ${rawText != null ? "${rawText!.length} chars" : "null"})';
   }
 }

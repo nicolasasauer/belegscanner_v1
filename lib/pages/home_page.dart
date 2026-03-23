@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
@@ -1047,6 +1048,21 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
   /// enthält und für die Anzeige genutzt wird.
   final NumberFormat _deDecimalFormat = NumberFormat('#0.00', 'de_DE');
 
+  // ---------------------------------------------------------------------------
+  // Easter-Egg: 5-faches schnelles Antippen des Belegbilds öffnet den
+  // Raw-OCR-Debug-Modus.
+  // ---------------------------------------------------------------------------
+
+  /// Zeitstempel der letzten Taps auf das Belegbild.
+  final List<DateTime> _imageTapTimestamps = [];
+
+  /// Maximales Zeitfenster (in Sekunden), in dem 5 Taps registriert werden
+  /// müssen, um den Debug-Modus auszulösen.
+  static const _debugTapWindow = Duration(seconds: 2);
+
+  /// Anzahl der erforderlichen Taps für den Debug-Trigger.
+  static const _debugTapCount = 5;
+
   @override
   void initState() {
     super.initState();
@@ -1353,16 +1369,168 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Easter-Egg Logik
+  // ---------------------------------------------------------------------------
+
+  /// Wird bei jedem Tap auf das Belegbild aufgerufen.
+  ///
+  /// Prüft, ob innerhalb von [_debugTapWindow] bereits [_debugTapCount] Taps
+  /// erfolgt sind. Beim 5. Tap wird der Raw-OCR-Debug-Modus ausgelöst.
+  /// Beim ersten Tap innerhalb des Zeitfensters wird zusätzlich die
+  /// Standard-Vollbild-Ansicht geöffnet.
+  void _onImageTap() {
+    final now = DateTime.now();
+    _imageTapTimestamps.add(now);
+
+    // Taps außerhalb des Zeitfensters entfernen
+    _imageTapTimestamps.removeWhere(
+      (t) => now.difference(t) > _debugTapWindow,
+    );
+
+    if (_imageTapTimestamps.length >= _debugTapCount) {
+      _imageTapTimestamps.clear();
+      _triggerDebugMode();
+    } else if (_imageTapTimestamps.length == 1) {
+      // Erster Tap im Zeitfenster → normale Vollbild-Ansicht öffnen
+      Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              _FullscreenImageViewer(imagePath: widget.receipt.imagePath!),
+        ),
+      );
+    }
+  }
+
+  /// Zeigt SnackBar-Feedback und öffnet das Raw-OCR-BottomSheet.
+  void _triggerDebugMode() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Entwicklermodus: Rohdaten werden geladen...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+    _showRawOcrSheet();
+  }
+
+  /// Öffnet ein [showModalBottomSheet] mit dem vollständigen OCR-Rohtext.
+  void _showRawOcrSheet() {
+    final rawText = widget.receipt.rawText;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          maxChildSize: 0.95,
+          minChildSize: 0.4,
+          expand: false,
+          builder: (_, scrollController) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Drag-Handle
+                  Center(
+                    child: Container(
+                      width: 48,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          ctx,
+                        ).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+
+                  // Titel-Zeile mit Käfer-Icon und Copy-Button
+                  Row(
+                    children: [
+                      const Icon(Icons.bug_report_outlined, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Raw OCR – Rohdaten',
+                          style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      if (rawText != null && rawText.isNotEmpty)
+                        IconButton(
+                          icon: const Icon(Icons.copy_outlined),
+                          tooltip: 'In Zwischenablage kopieren',
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: rawText),
+                            );
+                            if (ctx.mounted) {
+                              ScaffoldMessenger.of(ctx).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Rohtext in Zwischenablage kopiert.',
+                                  ),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                    ],
+                  ),
+
+                  const Divider(height: 16),
+
+                  // Scrollbarer Rohtext in Monospace
+                  Expanded(
+                    child: rawText == null || rawText.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Kein Rohtext vorhanden.\n'
+                              '(Beleg wurde vor dem Update gescannt.)',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(ctx).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      ctx,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          )
+                        : SingleChildScrollView(
+                            controller: scrollController,
+                            child: SelectableText(
+                              rawText,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                height: 1.5,
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// Belegbild-Vorschau: Tipp öffnet die Vollbild-Ansicht.
+  /// 5 schnelle Taps innerhalb von 2 Sekunden aktivieren den Raw-OCR-Debug-Modus.
   Widget _buildImagePreview(BuildContext context) {
     final path = widget.receipt.imagePath!;
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute<void>(
-          builder: (_) => _FullscreenImageViewer(imagePath: path),
-        ),
-      ),
+      onTap: _onImageTap,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Stack(

@@ -29,7 +29,10 @@ dependencies:
   path: ^1.9.0
 
   # Datei-Sharing (CSV-Export per E-Mail, Messenger, Cloud)
-  share_plus: ^10.0.0
+  share_plus: ^10.1.0
+
+  # Bilder in der Gerätegalerie speichern
+  image_gallery_saver: ^5.0.1
 
   # Permanentes App-Verzeichnis für Belegbilder
   path_provider: ^2.1.4

@@ -3,8 +3,10 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/receipt.dart';
@@ -1254,6 +1256,106 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Export / Sharing
+  // ---------------------------------------------------------------------------
+
+  /// Generiert einen sprechenden Dateinamen für den Export des Belegbilds.
+  ///
+  /// Format: `YYYY-MM-DD_Händler_Betrag.jpg`
+  /// Beispiel: `2026-03-23_Spar_10.76.jpg`
+  String _generateExportFileName(Receipt receipt) {
+    final dateStr = DateFormat('yyyy-MM-dd').format(receipt.date);
+    final rawMerchant = receipt.items.isNotEmpty
+        ? parseLineItem(receipt.items.first).name
+        : 'Unbekannt';
+    // Leerzeichen und Sonderzeichen entfernen, die in Dateinamen nicht erlaubt sind
+    final sanitizedMerchant =
+        rawMerchant.replaceAll(RegExp(r'[ /\\:*?"<>|]'), '');
+    final merchant = sanitizedMerchant.isNotEmpty ? sanitizedMerchant : 'Unbekannt';
+    final totalStr =
+        receipt.totalAmount.toStringAsFixed(2).replaceAll(',', '.');
+    return '${dateStr}_${merchant}_$totalStr.jpg';
+  }
+
+  /// Erstellt eine temporäre Kopie des Belegbilds mit dem Export-Dateinamen
+  /// und öffnet das native Share-Sheet.
+  Future<void> _shareImage() async {
+    final imagePath = widget.receipt.imagePath;
+    if (imagePath == null) return;
+
+    try {
+      final fileName = _generateExportFileName(widget.receipt);
+      final tempDir = await getTemporaryDirectory();
+      final tempPath = p.join(tempDir.path, fileName);
+      await File(imagePath).copy(tempPath);
+
+      if (!mounted) return;
+      await Share.shareXFiles([XFile(tempPath)]);
+
+      // Temporäre Datei nach dem Teilen aufräumen
+      final tempFile = File(tempPath);
+      if (await tempFile.exists()) await tempFile.delete();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Teilen fehlgeschlagen. Bitte erneut versuchen.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Speichert das Belegbild mit dem Export-Dateinamen in der Gerätegalerie.
+  Future<void> _saveToGallery() async {
+    final imagePath = widget.receipt.imagePath;
+    if (imagePath == null) return;
+
+    try {
+      final fileName = _generateExportFileName(widget.receipt);
+      final tempDir = await getTemporaryDirectory();
+      final tempPath = p.join(tempDir.path, fileName);
+      await File(imagePath).copy(tempPath);
+
+      final result = await ImageGallerySaver.saveFile(tempPath);
+
+      // Temporäre Datei nach dem Speichern aufräumen
+      final tempFile = File(tempPath);
+      if (await tempFile.exists()) await tempFile.delete();
+
+      final success = result is Map && result['isSuccess'] == true;
+      if (mounted) {
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Als $fileName in Galerie gespeichert')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Speichern in Galerie fehlgeschlagen. Bitte erneut versuchen.',
+              ),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Speichern in Galerie fehlgeschlagen. Bitte erneut versuchen.',
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Pre-compute once per build so all widgets share the same values.
@@ -1336,6 +1438,13 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(width: 8),
+                      // Teilen-Icon (nur wenn Belegbild vorhanden)
+                      if (hasImage)
+                        IconButton(
+                          icon: const Icon(Icons.share_outlined),
+                          tooltip: 'Belegbild teilen',
+                          onPressed: _shareImage,
+                        ),
                       // Bearbeiten / Speichern-Icon
                       _isEditing
                           ? IconButton(
@@ -1366,10 +1475,27 @@ class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
                         onSelected: (value) {
                           if (value == 'debug_raw_ocr') {
                             _showRawOcrSheet();
+                          } else if (value == 'save_to_gallery') {
+                            _saveToGallery();
                           }
                         },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
+                        itemBuilder: (_) => [
+                          if (hasImage)
+                            const PopupMenuItem(
+                              value: 'save_to_gallery',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.save_alt_outlined,
+                                    size: 18,
+                                    semanticLabel: '',
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text('In Galerie speichern'),
+                                ],
+                              ),
+                            ),
+                          const PopupMenuItem(
                             value: 'debug_raw_ocr',
                             child: Row(
                               children: [

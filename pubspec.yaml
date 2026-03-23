@@ -40,6 +40,9 @@ dependencies:
   # Persistente Einstellungen (z.B. max_concurrent_tasks)
   shared_preferences: ^2.3.5
 
+  # SHA-256-Hashing für Duplikatserkennung
+  crypto: ^3.0.6
+
   # Diagramme für das Statistik-Dashboard
   fl_chart: ^0.69.0
 

@@ -46,6 +46,13 @@ class Receipt {
   /// Wird während der OCR-Verarbeitung aktualisiert.
   final double progress;
 
+  /// SHA-256-Hash der Bilddatei.
+  ///
+  /// Dient der Duplikatserkennung: Bevor ein neues Bild verarbeitet wird,
+  /// wird geprüft, ob bereits ein Beleg mit demselben Hash existiert.
+  /// Kann `null` sein bei Altdaten oder wenn kein Bild vorhanden ist.
+  final String? fileHash;
+
   const Receipt({
     required this.id,
     required this.date,
@@ -56,6 +63,7 @@ class Receipt {
     this.rawText,
     this.status = 'completed',
     this.progress = 1.0,
+    this.fileHash,
   });
 
   /// Gibt die Kategorie für den Artikel an Index [i] zurück.
@@ -76,6 +84,7 @@ class Receipt {
     String? rawText,
     String? status,
     double? progress,
+    String? fileHash,
   }) {
     return Receipt(
       id: id ?? this.id,
@@ -87,6 +96,7 @@ class Receipt {
       rawText: rawText ?? this.rawText,
       status: status ?? this.status,
       progress: progress ?? this.progress,
+      fileHash: fileHash ?? this.fileHash,
     );
   }
 
@@ -105,6 +115,7 @@ class Receipt {
       'rawText': rawText,
       'status': status,
       'progress': progress,
+      'fileHash': fileHash,
     };
   }
 
@@ -131,6 +142,7 @@ class Receipt {
       rawText: map['rawText'] as String?,
       status: map['status'] as String? ?? 'completed',
       progress: (map['progress'] as num?)?.toDouble() ?? 1.0,
+      fileHash: map['fileHash'] as String?,
     );
   }
 
@@ -139,6 +151,6 @@ class Receipt {
     return 'Receipt(id: $id, date: $date, totalAmount: $totalAmount, '
         'items: $items, categories: $categories, imagePath: $imagePath, '
         'rawText: ${rawText != null ? "${rawText!.length} chars" : "null"}, '
-        'status: $status, progress: $progress)';
+        'status: $status, progress: $progress, fileHash: $fileHash)';
   }
 }

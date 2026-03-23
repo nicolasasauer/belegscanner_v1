@@ -3,11 +3,13 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/receipt.dart';
 import '../services/database_service.dart';
 import '../services/export_service.dart';
 import '../services/ocr_service.dart';
+import '../services/processor_service.dart';
 import '../widgets/receipt_detail_view.dart';
 import 'category_management_page.dart';
 
@@ -46,6 +48,7 @@ class _HomePageState extends State<HomePage> {
 
   late final DatabaseService _databaseService;
   late final OcrService _ocrService;
+  late final ProcessorService _processorService;
 
   final NumberFormat _currencyFormat = NumberFormat.currency(
     locale: 'de_DE',
@@ -62,13 +65,38 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _databaseService = widget.databaseService ?? DatabaseService();
     _ocrService = OcrService(databaseService: _databaseService);
-    Future.delayed(const Duration(milliseconds: 500), _loadReceipts);
+    _processorService = ProcessorService(databaseService: _databaseService)
+      ..onReceiptUpdated = _onReceiptUpdated;
+    Future.delayed(const Duration(milliseconds: 500), () async {
+      await _processorService.loadSettings();
+      await _processorService.markInterruptedAsFailed();
+      await _loadReceipts();
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// Wird aufgerufen, sobald [ProcessorService] einen Beleg aktualisiert hat.
+  ///
+  /// Ersetzt den bestehenden Eintrag in [_receipts] oder entfernt ihn, wenn
+  /// er als Duplikat übersprungen wurde.
+  void _onReceiptUpdated(Receipt updated) {
+    if (!mounted) return;
+    setState(() {
+      if (updated.status == 'duplicate') {
+        // Duplikat-Platzhalter aus der UI entfernen
+        _receipts.removeWhere((r) => r.id == updated.id);
+      } else {
+        final idx = _receipts.indexWhere((r) => r.id == updated.id);
+        if (idx != -1) {
+          _receipts[idx] = updated;
+        }
+      }
+    });
   }
 
   Future<void> _loadReceipts() async {
@@ -218,23 +246,26 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _importFromGallery() async {
-    setState(() => _isScanning = true);
     try {
-      final receipt = await _ocrService.importFromGallery();
-      if (receipt != null && mounted) {
-        await _databaseService.insertReceipt(receipt);
-        setState(() => _receipts.add(receipt));
-        if (receipt.totalAmount == 0.0 && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Betrag konnte nicht automatisch erkannt werden. '
-                'Bitte manuell prüfen.',
-              ),
-            ),
-          );
-        }
+      // Mehrere Bilder auswählen; gibt Platzhalter-Receipts zurück
+      final placeholders = await _ocrService.pickMultipleImages();
+      if (placeholders.isEmpty || !mounted) return;
+
+      // Zähler zurücksetzen und alle Platzhalter sofort in DB + UI eintragen
+      _processorService.skippedDuplicates = 0;
+      for (final placeholder in placeholders) {
+        await _databaseService.insertReceipt(placeholder);
+        if (mounted) setState(() => _receipts.insert(0, placeholder));
       }
+
+      // Alle Jobs in die Warteschlange einreihen
+      for (final placeholder in placeholders) {
+        _processorService.enqueue(placeholder);
+      }
+
+      // Nach Abschluss aller Jobs ggf. Duplikat-Meldung anzeigen
+      // Wir warten kurz und prüfen dann wiederholt, bis die Queue leer ist.
+      _waitForQueueAndNotify(placeholders.length);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -247,9 +278,41 @@ class _HomePageState extends State<HomePage> {
           ),
         );
       }
-    } finally {
-      if (mounted) setState(() => _isScanning = false);
     }
+  }
+
+  /// Wartet asynchron, bis alle [total] Jobs abgeschlossen sind, und zeigt
+  /// dann eine Zusammenfassung an (inkl. Duplikate).
+  void _waitForQueueAndNotify(int total) {
+    // Polling: alle 500 ms prüfen, ob noch 'processing'-Belege vorhanden sind.
+    Future.delayed(const Duration(milliseconds: 500), () async {
+      if (!mounted) return;
+      final processing =
+          _receipts.where((r) => r.status == 'processing').toList();
+      if (processing.isNotEmpty) {
+        _waitForQueueAndNotify(total);
+        return;
+      }
+      // Alle Jobs fertig → Zusammenfassung anzeigen
+      final dupes = _processorService.skippedDuplicates;
+      if (dupes > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              dupes == 1
+                  ? '1 Duplikat wurde übersprungen.'
+                  : '$dupes Duplikate wurden übersprungen.',
+            ),
+            action: SnackBarAction(
+              label: 'OK',
+              onPressed: () =>
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar(),
+            ),
+          ),
+        );
+        _processorService.skippedDuplicates = 0;
+      }
+    });
   }
 
   Future<void> _deleteReceipt(Receipt receipt) async {
@@ -519,12 +582,15 @@ class _HomePageState extends State<HomePage> {
                                   false;
                             },
                             onDismissed: (_) => _deleteReceipt(receipt),
-                            child: _ReceiptListTile(
-                              receipt: receipt,
-                              dateFormat: _dateFormat,
-                              currencyFormat: _currencyFormat,
-                              onTap: () => _showReceiptDetails(receipt),
-                            ),
+                            child: receipt.status == 'processing' ||
+                                    receipt.status == 'failed'
+                                ? _ProcessingReceiptCard(receipt: receipt)
+                                : _ReceiptListTile(
+                                    receipt: receipt,
+                                    dateFormat: _dateFormat,
+                                    currencyFormat: _currencyFormat,
+                                    onTap: () => _showReceiptDetails(receipt),
+                                  ),
                           );
                         },
                       ),
@@ -617,8 +683,73 @@ class _HomePageState extends State<HomePage> {
                   );
                 },
               ),
+              ListTile(
+                leading: const Icon(Icons.settings_outlined),
+                title: const Text('Einstellungen'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showSettingsDialog();
+                },
+              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Zeigt einen Einstellungs-Dialog mit einem Slider für die maximale
+  /// Anzahl gleichzeitiger Verarbeitungs-Jobs.
+  Future<void> _showSettingsDialog() async {
+    double current = _processorService.maxConcurrent.toDouble();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Einstellungen'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Parallele Verarbeitungs-Jobs: ${current.round()}',
+                style: Theme.of(ctx).textTheme.bodyMedium,
+              ),
+              Slider(
+                value: current,
+                min: 1,
+                max: 5,
+                divisions: 4,
+                label: current.round().toString(),
+                onChanged: (v) => setDialogState(() => current = v),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Höhere Werte verarbeiten mehr Bilder gleichzeitig, '
+                'können aber die App verlangsamen.',
+                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                // maxConcurrent wird sofort gesetzt; laufende Jobs werden
+                // nicht abgebrochen. Der neue Wert gilt für alle folgenden
+                // Job-Starts, sobald ein aktiver Slot frei wird.
+                _processorService.maxConcurrent = current.round();
+                await _processorService.saveSettings();
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Speichern'),
+            ),
+          ],
         ),
       ),
     );
@@ -859,6 +990,118 @@ class _FilterBar extends StatelessWidget {
       'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
     ];
     return names[month - 1];
+  }
+}
+
+// =============================================================================
+// Verarbeitungs-Platzhalter Widget (shimmer-ähnlich + LinearProgressIndicator)
+// =============================================================================
+
+/// Zeigt einen Beleg-Platzhalter während der Hintergrundverarbeitung an.
+///
+/// Enthält einen [LinearProgressIndicator] für den aktuellen Fortschritt
+/// und einen animierten Schimmer-Effekt, der die laufende Verarbeitung signalisiert.
+class _ProcessingReceiptCard extends StatefulWidget {
+  const _ProcessingReceiptCard({required this.receipt});
+  final Receipt receipt;
+
+  @override
+  State<_ProcessingReceiptCard> createState() => _ProcessingReceiptCardState();
+}
+
+class _ProcessingReceiptCardState extends State<_ProcessingReceiptCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _shimmer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isFailed = widget.receipt.status == 'failed';
+
+    return AnimatedBuilder(
+      animation: _shimmer,
+      builder: (_, __) {
+        final shimmerAlpha = isFailed ? 0.0 : _shimmer.value * 0.12;
+        return Card(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24.0),
+          ),
+          elevation: 0.5,
+          color: isFailed
+              ? colorScheme.errorContainer
+              : Color.lerp(
+                  colorScheme.surfaceContainerLow,
+                  colorScheme.primaryContainer,
+                  shimmerAlpha,
+                ),
+          child: Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      isFailed
+                          ? Icons.error_outline
+                          : Icons.hourglass_top_outlined,
+                      color: isFailed
+                          ? colorScheme.onErrorContainer
+                          : colorScheme.primary,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      isFailed ? 'Verarbeitung fehlgeschlagen' : 'Wird verarbeitet…',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: isFailed
+                                ? colorScheme.onErrorContainer
+                                : colorScheme.onSurface,
+                          ),
+                    ),
+                    const Spacer(),
+                    if (!isFailed)
+                      Text(
+                        '${(widget.receipt.progress * 100).round()} %',
+                        style:
+                            Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                      ),
+                  ],
+                ),
+                if (!isFailed) ...[
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: widget.receipt.progress,
+                      minHeight: 4,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 

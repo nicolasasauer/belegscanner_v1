@@ -135,6 +135,9 @@ void main() {
         categories: ['Lebensmittel', 'Lebensmittel'],
         imagePath: '/tmp/scan.jpg',
         rawText: 'Bäckerei\n22.03.2026\nBrot 2,49\nSUMME 14,95',
+        status: 'completed',
+        progress: 1.0,
+        fileHash: 'deadbeef01234567',
       );
 
       final map = receipt.toMap();
@@ -146,6 +149,9 @@ void main() {
       expect(map['categories'], equals('["Lebensmittel","Lebensmittel"]'));
       expect(map['imagePath'], equals('/tmp/scan.jpg'));
       expect(map['rawText'], equals('Bäckerei\n22.03.2026\nBrot 2,49\nSUMME 14,95'));
+      expect(map['status'], equals('completed'));
+      expect(map['progress'], equals(1.0));
+      expect(map['fileHash'], equals('deadbeef01234567'));
     });
 
     test('toMap hat rawText als null wenn nicht gesetzt', () {
@@ -157,6 +163,9 @@ void main() {
       );
       expect(receipt.toMap()['rawText'], isNull);
       expect(receipt.toMap()['categories'], equals('[]'));
+      expect(receipt.toMap()['fileHash'], isNull);
+      expect(receipt.toMap()['status'], equals('completed'));
+      expect(receipt.toMap()['progress'], equals(1.0));
     });
 
     test('fromMap erstellt einen korrekten Receipt', () {
@@ -203,6 +212,9 @@ void main() {
         categories: ['Lebensmittel', 'Getränke', 'Sonstiges'],
         imagePath: '/tmp/roundtrip.jpg',
         rawText: 'Shop\n01.05.2026 12:00\nArtikel A 10,00\nSUMME 23,45',
+        status: 'completed',
+        progress: 1.0,
+        fileHash: 'abc123def456',
       );
 
       final restored = Receipt.fromMap(original.toMap());
@@ -214,6 +226,9 @@ void main() {
       expect(restored.categories, equals(original.categories));
       expect(restored.imagePath, equals(original.imagePath));
       expect(restored.rawText, equals(original.rawText));
+      expect(restored.status, equals(original.status));
+      expect(restored.progress, equals(original.progress));
+      expect(restored.fileHash, equals(original.fileHash));
     });
 
     test('fromMap mit leerer Artikel-Liste', () {

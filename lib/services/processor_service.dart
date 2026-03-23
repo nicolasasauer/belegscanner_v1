@@ -33,6 +33,11 @@ const int kDefaultMaxConcurrentTasks = 2;
 /// Neue Aufgaben werden sofort in die Warteschlange aufgenommen; sobald ein
 /// Slot frei wird, startet der nächste Job automatisch.
 ///
+/// **Duplikatserkennung:** Vor dem Start jedes Jobs wird ein SHA-256-Hash
+/// der Bilddatei berechnet (in einem Background-Isolate via [compute]).
+/// Existiert bereits ein Beleg mit demselben Hash, wird der Job übersprungen
+/// und der Zähler [skippedDuplicates] erhöht.
+///
 /// Benachrichtigungen über Statusänderungen werden über [onReceiptUpdated]
 /// weitergeleitet.
 class ProcessorService {
@@ -51,6 +56,9 @@ class ProcessorService {
   /// Wird mit dem aktualisierten [Receipt] aufgerufen, sobald sich dessen
   /// Status oder Fortschritt ändert.
   ValueChanged<Receipt>? onReceiptUpdated;
+
+  /// Anzahl der übersprungenen Duplikate seit dem letzten Batch-Start.
+  int skippedDuplicates = 0;
 
   final Queue<_ProcessorTask> _queue = Queue();
   int _activeJobs = 0;
@@ -123,10 +131,35 @@ class ProcessorService {
     }
 
     try {
-      // Fortschritt: OCR startet (25 %)
+      // ── Schritt 1: SHA-256-Hash im Background-Isolate berechnen ──────────
+      // Wir verwenden `compute` für alle Dateien – Isolate-Overhead ist für
+      // Bilddateien (typisch 1–10 MB) vernachlässigbar gegenüber dem
+      // UI-Jank durch synchrones Lesen im Haupt-Isolate.
+      final hash = await compute(computeFileHash, tempPath);
+
+      if (hash != null) {
+        // ── Schritt 2: Duplikatsprüfung in der Datenbank ──────────────────
+        final existingId =
+            await _databaseService.findReceiptIdByFileHash(hash);
+        if (existingId != null && existingId != receipt.id) {
+          // Duplikat gefunden → Platzhalter aus der DB löschen und Zähler
+          // erhöhen, damit die UI den Nutzer informieren kann.
+          debugPrint(
+              '[ProcessorService] Duplikat erkannt (hash=$hash, '
+              'existingId=$existingId) – überspringe ${receipt.id}');
+          await _databaseService.deleteReceipt(receipt.id);
+          skippedDuplicates++;
+          onReceiptUpdated?.call(receipt.copyWith(status: 'duplicate'));
+          return;
+        }
+      }
+
+      // ── Schritt 3: Fortschritt aktualisieren (25 %) ───────────────────────
       await _updateProgress(receipt, 0.25);
 
-      // OCR auf dem Haupt-Isolate durchführen (ML Kit benötigt Platform Channels)
+      // ── Schritt 4: OCR auf dem Haupt-Isolate ─────────────────────────────
+      // ML Kit benötigt Platform Channels und kann nicht in einem Isolate
+      // laufen. Die Fortschrittsanzeige sorgt dennoch für UI-Feedback.
       final inputImage = InputImage.fromFilePath(tempPath);
       final textRecognizer =
           TextRecognizer(script: TextRecognitionScript.latin);
@@ -139,31 +172,29 @@ class ProcessorService {
 
       final fullText = recognizedText.text;
 
-      // Fortschritt: OCR abgeschlossen, Parsing startet (50 %)
+      // ── Schritt 5: Bild permanent speichern (50 %) ───────────────────────
       await _updateProgress(receipt, 0.50);
-
-      // Bild permanent speichern (falls tempPath noch ein Cache-Pfad ist)
       final permanentPath = await _persistImage(tempPath);
 
-      // Fortschritt: Bild gespeichert (75 %)
+      // ── Schritt 6: Kategorien laden + Parsing (75 %) ─────────────────────
       await _updateProgress(receipt, 0.75);
 
-      // Kategorien laden
       List<Map<String, dynamic>> categoryData = [];
       try {
         final cats = await _databaseService.getCategories();
         categoryData = cats.map((c) => c.toMap()).toList();
       } catch (e) {
-        debugPrint('[ProcessorService] Kategorien konnten nicht geladen werden: $e');
+        debugPrint(
+            '[ProcessorService] Kategorien konnten nicht geladen werden: $e');
       }
 
-      // Text-Parsing im Background-Isolate
-      final result = await compute(_parseOcrText, {
+      // Text-Parsing in einem Background-Isolate
+      final result = await compute(parseOcrText, {
         'text': fullText,
         'categoryData': categoryData,
       });
 
-      // Abgeschlossenen Beleg speichern
+      // ── Schritt 7: Abgeschlossenen Beleg speichern ───────────────────────
       final completed = receipt.copyWith(
         totalAmount: result['amount'] as double,
         items: List<String>.from(result['items'] as List),
@@ -172,6 +203,7 @@ class ProcessorService {
         rawText: fullText.isEmpty ? null : fullText,
         status: 'completed',
         progress: 1.0,
+        fileHash: hash,
       );
 
       await _databaseService.updateReceipt(completed);
@@ -208,7 +240,8 @@ class ProcessorService {
       await File(tempPath).copy(permanentFile.path);
       return permanentFile.path;
     } catch (e) {
-      debugPrint('[ProcessorService] Bild konnte nicht persistiert werden: $e');
+      debugPrint(
+          '[ProcessorService] Bild konnte nicht persistiert werden: $e');
       return null;
     }
   }

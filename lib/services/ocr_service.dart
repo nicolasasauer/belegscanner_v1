@@ -27,16 +27,26 @@ final RegExp lineItemPriceRegex =
 /// Gibt einen Named-Record `(name, price)` zurück. Wenn kein Preis erkannt
 /// wird, enthält [name] die ursprüngliche [line] und [price] ist `null`.
 ///
+/// Dynamische Bereinigung: Einzelne Großbuchstaben am Ende des extrahierten
+/// Namens (Steuerklassen-Kennzeichen wie "A", "B", "C"), die durch ein
+/// Leerzeichen vom eigentlichen Namen getrennt sind, werden automatisch
+/// entfernt (z. B. "BROT A" → "BROT").
+///
 /// Beispiele:
 /// - "dmBio Tofu Rosso 200g 1,65 2" → name: "dmBio Tofu Rosso 200g", price: 1.65
 /// - "Brot 750g  2,49" → name: "Brot 750g", price: 2.49
+/// - "Apfelstrudel A 2,50" → name: "Apfelstrudel", price: 2.50
 /// - "1,65" → name: "1,65", price: null
 @visibleForTesting
 ({String name, double? price}) parseLineItem(String line) {
   final match = lineItemPriceRegex.firstMatch(line);
   if (match == null) return (name: line, price: null);
   final price = double.tryParse(match.group(1)!.replaceAll(',', '.'));
-  final name = line.substring(0, match.start).trim();
+  var name = line.substring(0, match.start).trim();
+  // Dynamische Bereinigung: Steuerklassen-Buchstaben (A, B, C …) am Ende
+  // des Artikelnamens entfernen – erkennbar als einzelner Großbuchstabe
+  // nach einem Leerzeichen (z. B. "ARTIKEL A" → "ARTIKEL").
+  name = name.replaceAll(RegExp(r'\s+[A-Z]$'), '');
   return (name: name, price: price);
 }
 
@@ -116,115 +126,156 @@ double parseAmountImpl(String text) {
 /// Zerlegt den OCR-Text in Einzelzeilen, bereinigt OCR-Artefakte und
 /// filtert Header-Daten, Zahlungszeilen, Summenzeilen sowie Junk-Text heraus.
 ///
-/// Angewendete Schritte:
-///   1. Header-, Meta-, Zahlungs-, Terminal- und Summenzeilen werden per
-///      Regex-Ausschlussliste entfernt (z. B. GmbH, PLZ, Telefon, Summe,
-///      MwSt, EUR, Zahlung, Visa, Payback, Terminal-IDs, Werbe-Slogans).
-///      Zeilen aus langen alphanumerischen Zeichenketten (Terminal-Daten
-///      wie AID "A0000000041010") werden ebenfalls verworfen.
-///   2. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio", "dnBio")
-///      werden gestripped, sodass der Artikelname erhalten bleibt.
-///   3. Paare aus [NAME] und [PREIS] werden erkannt:
+/// Algorithmus (ladenunabhängig / generisch):
+///   1. Header-Cut: Alle Zeilen vor dem ersten Datum (TT.MM.JJJJ) oder der
+///      ersten Uhrzeit (HH:MM) werden übersprungen. Ist kein Anker vorhanden,
+///      werden alle Zeilen verarbeitet.
+///   2. Footer-Cut: Sobald SUMME, TOTAL, GESAMT oder ZAHLBETRAG erscheint,
+///      wird die Artikel-Suche beendet. Terminal-Daten, Payback und
+///      Grußformeln dahinter werden vollständig ignoriert.
+///   3. Müll-Muster: Herausgefiltert werden Zeilen mit mehr als 15
+///      aufeinanderfolgenden Ziffern (Terminal-IDs/IBANs), Zeilen aus
+///      ausschließlich Sonderzeichen (z. B. "------") sowie Zeilen mit
+///      URLs oder E-Mail-Adressen.
+///   4. Generischer Metadaten-Filter: Zeilen mit MwSt-Angaben, Zahlungs-
+///      mitteln (Visa, Bar, Zahlung) und Kundenbindungs-Programmen werden
+///      gefiltert, da sie trotz Preis-Muster keine Artikel sind.
+///   5. OCR-Junk-Präfixe am Zeilenanfang (z. B. "CnBio", "unBio") werden
+///      gestripped, sodass der Artikelname erhalten bleibt.
+///   6. Artikel-Paare aus [NAME] und [PREIS] werden erkannt:
 ///      - Zeilen mit Text + Preis am Ende → direkt als Artikel übernommen.
 ///      - Reine Text-Zeilen gefolgt von einer reinen Preis-Zeile →
-///        zusammengeführt (OCR-Toleranz: OCR schiebt Preis manchmal in die
-///        nächste Zeile).
+///        zusammengeführt (OCR-Split).
 ///      - Reine Text-Zeilen gefolgt von einer Mengenberechnung
-///        (z. B. "4 X 1,59") und dann einer Preis-Zeile → Name mit dem
-///        Gesamtpreis zusammengeführt (Multi-Line-Artikel).
+///        (z. B. "4 X 1,59") und dann einer Preis-Zeile →
+///        zusammengeführt (Multi-Line-Artikel).
 ///      - Standalone-Preis-Zeilen, Mengenberechnungs-Zeilen und reine
-///        Zahlen (z. B. MwSt-Sätze) werden ignoriert.
+///        Zahlen werden ignoriert.
 ///
 /// Jeder erkannte Treffer wird per [debugPrint] mit
 /// `[OCR-Match] Found: Name=… Price=…` protokolliert.
 @visibleForTesting
 List<String> parseItemsImpl(String text) {
-  // 1. Ausschlussmuster für typische Bon-Header, Meta-Daten, Summen-,
-  //    Zahlungs- und Terminal-Zeilen sowie Werbe-Slogans.
-  final RegExp headerPattern = RegExp(
-    // Rechtsformen / Firmenbezeichnungen
-    r'GmbH|OHG|e\.K\.|'
-    r'(?:^|\s)(?:AG|KG|eG)(?:\s|$)|e\.V\.|'
-    // Adresse / Postleitzahl / Straße
-    r'\b\d{5}\b|\bStr\.|Stra[ßs]e|Gasse|Platz|Marktgraben|'
-    // Telefon / Fax / Internet
-    r'Tel\.?:?\s*[\d\s\-/()]{5,}|Telefon|Fax|'
-    r'www\.\S+|https?://|'
-    // Steuer-IDs
-    r'USt.{0,5}IdNr|Steuernummer|'
-    // Datum / Uhrzeit
-    r'\d{1,2}\.\d{1,2}\.\d{2,4}|'
-    r'\d{1,2}:\d{2}\s*Uhr|'
-    // Summen- und Gesamtbetragszeilen
-    r'\bSumme\b|\bGesamtbetrag\b|\bZwischensumme\b|\bEndbetrag\b|'
-    r'\bZahlbetrag\b|\bRestbetrag\b|\bZu zahlen\b|'
-    // Steuer-Kennzeichen / MwSt-Zeilen
+  // ─── 1. Strukturelle Muster (Anker) ──────────────────────────────────────
+
+  // Header-Cut: Datum (TT.MM.JJJJ) oder Uhrzeit (HH:MM) markiert das Ende
+  // des Bon-Headers. Alle Zeilen davor werden übersprungen.
+  final RegExp headerCutPattern = RegExp(
+    r'\b\d{1,2}\.\d{1,2}\.\d{2,4}\b|\b\d{1,2}:\d{2}\b',
+  );
+
+  // Footer-Cut: Diese Schlüsselwörter markieren das Ende der Artikel-Sektion.
+  // Alles ab dieser Zeile (Terminal-Daten, Payback, Grußformeln) wird ignoriert.
+  final RegExp footerPattern = RegExp(
+    r'\b(?:SUMME|TOTAL|GESAMT|ZAHLBETRAG)\b',
+    caseSensitive: false,
+  );
+
+  // ─── 2. Müll-Muster ──────────────────────────────────────────────────────
+
+  // Mehr als 15 aufeinanderfolgende Ziffern (Terminal-IDs, IBANs)
+  final RegExp manyDigitsPattern = RegExp(r'\d{15,}');
+
+  // Nur Sonderzeichen (Trennlinien wie "------", "====="):
+  // Zeilen ohne einen einzigen Buchstaben oder eine einzige Ziffer.
+  final RegExp specialCharsOnlyPattern = RegExp(r'^[^A-Za-z0-9äöüÄÖÜß]+$');
+
+  // URLs oder E-Mail-Adressen.
+  // Das TLD-Muster [A-Za-z][A-Za-z0-9-]*\.(de|at|…) erfordert, dass der
+  // Domain-Name mit einem Buchstaben beginnt, um Preismuster (z. B. "1,99")
+  // nicht fälschlich zu treffen.
+  final RegExp urlEmailPattern = RegExp(
+    r'www\.|https?://|\S+@\S+|\b[A-Za-z][A-Za-z0-9-]*\.(de|at|com|org)\b',
+    caseSensitive: false,
+  );
+
+  // ─── 3. Generischer Metadaten-Filter ─────────────────────────────────────
+  // Zeilen, die trotz Preis-Muster KEINE Artikel sind (universell für
+  // deutschsprachige Kassenbons).
+  final RegExp metaPattern = RegExp(
+    // Steuer / MwSt
     r'\bMwSt\b|\bMWSt\b|\bUmSt\b|\bMehrwertsteuer\b|\bSteuer\b|'
     r'\bNetto\b|\bBrutto\b|'
-    // Währungs-Zeilen (z. B. "EUR 14,95")
-    r'\bEUR\b|'
     // Zahlungsmittel
     r'\bZahlung\b|\bBargeld\b|\bBar\b|\bGegeben\b|'
     r'\bRückgeld\b|\bWechselgeld\b|'
     r'\bVisa\b|\bMastercard\b|\bMaestro\b|\bEC-Karte\b|\bKartenzahlung\b|'
     r'\bDEBIT\b|\bCREDIT\b|'
-    // Terminal-Daten (Kartenzahlung-Details / NFC)
+    // Terminal-Daten
     r'\bAcq-?Id\b|\bTrm-?Id\b|\bAID\b|\bVerarbeitung\s+OK\b|'
     r'\bKundenbeleg\b|\bcontactless\b|\bPAN\b|\bTrack2?\b|'
-    // Kundenbindungsprogramme
+    // Kundenbindung
     r'\bPayback\b|\bBonus\b|\bPunkte\b|\bCoupon\b|\bGutschein\b|'
-    // Kasseninformationen
-    r'\bKassennummer\b|\bBonnummer\b|\bKassenbon\b|\bBon-Nr\b|\bKassen-ID\b|'
-    // Grußformeln / Werbe-Slogans
-    r'Hier bin ich Mensch|'
-    r'\bVielen Dank\b|\bAuf Wiedersehen\b|'
-    r'\bGuten\s+(?:Morgen|Tag|Abend)\b|'
-    r'\bWillkommen\b',
+    // Kasseninfo
+    r'\bKassennummer\b|\bBonnummer\b|\bKassenbon\b|\bBon-Nr\b|\bKassen-ID\b',
     caseSensitive: false,
   );
 
-  // 2. OCR-Junk-Präfixe (z. B. 'CnBio', 'unBio', 'dnBio', 'xnBio')
+  // ─── 4. OCR-Artefakt-Bereinigung ─────────────────────────────────────────
+  // Bekannte OCR-Junk-Präfixe (z. B. 'CnBio', 'unBio', 'dnBio').
   final RegExp junkPrefixPattern = RegExp(r'^[A-Za-z]nBio\s+');
 
-  // 3a. Preis-Only-Muster: die ganze Zeile ist nur ein Preis
-  //     (z. B. "1,65", "2.99", "14,95 A", "1,65 2")
+  // ─── 5. Artikel-Erkennungs-Muster ────────────────────────────────────────
+
+  // Preis-Only: die ganze Zeile ist nur ein Preis (z. B. "1,65", "2.99 A")
   final RegExp priceOnlyPattern = RegExp(
     r'^\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
   );
 
-  // 3b. Vollständiges Artikel-Muster: Zeile hat Namenstext + Preis am Ende
-  //     (z. B. "dmBio Tofu Rosso 200g 1,65", "Brot 750g 2,49 A").
-  //     Lookahead stellt sicher, dass mindestens ein Buchstabe im Namensteil
-  //     enthalten ist, um reine Zahlenzeilen auszuschließen.
+  // Vollständiges Artikel-Muster: Text + Preis am Ende.
+  // Lookahead stellt sicher, dass mindestens ein Buchstabe im Namensteil
+  // enthalten ist, um reine Zahlenzeilen auszuschließen.
   final RegExp itemWithPricePattern = RegExp(
     r'(?=.*[A-Za-zÄÖÜäöüß]).+\s+\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
   );
 
-  // 3c. Mengenberechnungs-Muster: z. B. "4 X 1,59" oder "2x0,99"
-  //     Diese Zeilen enthalten keine eigenständigen Artikelnamen und werden
-  //     nur im Kontext von Multi-Line-Artikeln ausgewertet.
+  // Mengenberechnungs-Muster: z. B. "4 X 1,59" oder "2x0,99"
+  // Nur im Kontext von Multi-Line-Artikeln ausgewertet.
   final RegExp qtyCalcPattern = RegExp(
     r'^\d+\s*[xX]\s*\d{1,4}[.,]\d{2}',
   );
 
-  // 3d. Lange alphanumerische Zeichenketten (Terminal-Hex-Daten wie
-  //     "A0000000041010") – werden komplett ignoriert.
-  final RegExp hexDataPattern = RegExp(r'^[A-Fa-f0-9]{10,}$');
-
-  // Schritt 1: Zeilen säubern, Header-/Meta-/Terminal-Zeilen entfernen und
-  //            lange alphanumerische Zeichenketten (Terminal-Hex-Daten wie
-  //            "A0000000041010") herausfiltern.
-  final lines = text
+  // ─── Schritt 1: Zeilen aufteilen ─────────────────────────────────────────
+  final allLines = text
       .split('\n')
       .map((l) => l.trim())
       .where((l) => l.isNotEmpty)
-      .where((l) => !headerPattern.hasMatch(l))
-      .where((l) => !hexDataPattern.hasMatch(l))
+      .toList();
+
+  // ─── Schritt 2: Header-Cut ───────────────────────────────────────────────
+  // Überspringe alle Zeilen vor dem ersten Datum / der ersten Uhrzeit.
+  // Wenn kein Anker gefunden wird, beginne von vorne (kein Header-Cut).
+  int startIndex = 0;
+  for (int i = 0; i < allLines.length; i++) {
+    if (headerCutPattern.hasMatch(allLines[i])) {
+      startIndex = i;
+      break;
+    }
+  }
+
+  // ─── Schritt 3: Footer-Cut ───────────────────────────────────────────────
+  // Beende die Artikel-Suche sobald SUMME / TOTAL / GESAMT / ZAHLBETRAG
+  // erscheint. Alles danach wird vollständig ignoriert.
+  int endIndex = allLines.length;
+  for (int i = startIndex; i < allLines.length; i++) {
+    if (footerPattern.hasMatch(allLines[i])) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  // ─── Schritt 4: Müll und Metadaten filtern, OCR-Artefakte bereinigen ─────
+  final lines = allLines
+      .sublist(startIndex, endIndex)
+      .where((l) => !manyDigitsPattern.hasMatch(l))
+      .where((l) => !specialCharsOnlyPattern.hasMatch(l))
+      .where((l) => !urlEmailPattern.hasMatch(l))
+      .where((l) => !metaPattern.hasMatch(l))
       .map((l) => l.replaceFirst(junkPrefixPattern, '').trim())
       .where((l) => l.isNotEmpty)
       .toList();
 
-  // Schritt 2: Artikel-Paare (Name + Preis) erkennen und zusammenführen
+  // ─── Schritt 5: Artikel-Paare erkennen und zusammenführen ────────────────
   final result = <String>[];
   var i = 0;
   while (i < lines.length) {

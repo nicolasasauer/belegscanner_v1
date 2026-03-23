@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -199,6 +201,77 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [category.id],
     );
+  }
+
+  /// Gibt die Ausgaben des aktuellen Monats gruppiert nach Kategorie zurück.
+  ///
+  /// Jedes Element der Liste ist eine Map mit den Schlüsseln:
+  ///   - `category` (String): Kategoriename
+  ///   - `total` (double): Summe der Beträge in dieser Kategorie
+  ///
+  /// Belege ohne Kategorie-Zuordnung werden unter „Sonstiges" zusammengefasst.
+  /// Die Zuordnung erfolgt über die pro-Artikel gespeicherte `categories`-Liste.
+  Future<List<Map<String, dynamic>>> getCategoryTotals() async {
+    final db = await database;
+    final now = DateTime.now();
+    final firstDay =
+        DateTime(now.year, now.month, 1).toIso8601String();
+    // DateTime akzeptiert month > 12 und rollt automatisch ins nächste Jahr.
+    final lastDay =
+        DateTime(now.year, now.month + 1, 1).toIso8601String();
+
+    final rows = await db.query(
+      _tableName,
+      columns: ['items', 'categories', 'totalAmount'],
+      where: 'date >= ? AND date < ?',
+      whereArgs: [firstDay, lastDay],
+    );
+
+    // Aggregiere Beträge pro Kategorie über alle Artikel aller Belege.
+    final Map<String, double> totals = {};
+
+    for (final row in rows) {
+      final items =
+          (jsonDecode(row['items'] as String) as List<dynamic>).cast<String>();
+      final categories = row['categories'] != null
+          ? (jsonDecode(row['categories'] as String) as List<dynamic>)
+              .cast<String>()
+          : <String>[];
+
+      for (int i = 0; i < items.length; i++) {
+        final category =
+            i < categories.length ? categories[i] : 'Sonstiges';
+        // Preis aus dem Artikel-String extrahieren (Format: "Name  Preis")
+        final parts = items[i].split('  ');
+        double price = 0.0;
+        if (parts.length >= 2) {
+          // Deutschen Dezimaltrenner normalisieren und dann sauber parsen
+          final rawPrice =
+              parts.last.trim().replaceAll(',', '.').replaceAll(RegExp(r'[^0-9\.]'), '');
+          // Sicherstellen, dass nur ein Dezimalpunkt vorhanden ist
+          final dotCount = rawPrice.split('.').length - 1;
+          final cleanPrice =
+              dotCount > 1 ? rawPrice.replaceAll('.', '').padRight(3, '0') : rawPrice;
+          price = double.tryParse(cleanPrice) ?? 0.0;
+        }
+        if (price > 0) {
+          totals[category] = (totals[category] ?? 0.0) + price;
+        }
+      }
+
+      // Wenn keine Artikel aufgeteilt werden können (z. B. ältere Belege),
+      // den Gesamtbetrag unter „Sonstiges" zählen.
+      if (items.isEmpty) {
+        final amount = (row['totalAmount'] as num).toDouble();
+        totals['Sonstiges'] = (totals['Sonstiges'] ?? 0.0) + amount;
+      }
+    }
+
+    return totals.entries
+        .map((e) => {'category': e.key, 'total': e.value})
+        .toList()
+      ..sort((a, b) =>
+          (b['total'] as double).compareTo(a['total'] as double));
   }
 
   /// Löscht eine Kategorie anhand ihrer [id].

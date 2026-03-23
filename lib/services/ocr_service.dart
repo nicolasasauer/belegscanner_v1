@@ -139,8 +139,12 @@ String _smartCategorize(
 /// "dmBio Tofu Rosso 200g 1,65 2" (Tax-Code am Ende ist Buchstabe oder Ziffer).
 /// Das führende `\s+` stellt sicher, dass der Preis durch mindestens ein
 /// Leerzeichen vom Artikelnamen getrennt ist.
+///
+/// Der optionale Tax-Code (`[A-Za-z0-9]`) muss durch ein Leerzeichen vom Preis
+/// getrennt sein (z. B. "1,49 A", "1,65 2"). Direkt angehängte Einheiten wie
+/// "0,33L" (Volumenangabe ohne Leerzeichen) werden damit NICHT als Preis erkannt.
 final RegExp lineItemPriceRegex =
-    RegExp(r'\s+(\d{1,4}[.,]\d{2})\s*[A-Za-z0-9]?\s*$');
+    RegExp(r'\s+(\d{1,4}[.,]\d{2})(?:\s+[A-Za-z0-9])?\s*$');
 
 /// Parst eine OCR-Zeile in einen Artikelnamen und einen optionalen Preis.
 ///
@@ -232,9 +236,17 @@ double parseAmountImpl(String text) {
     if (value != null && value > 0) return value;
   }
 
-  // Fallback: größten Betrag im Text suchen
+  // Fallback: größten Betrag im Text suchen.
+  //
+  // Der Negative Lookahead `(?![.,\d%])` verhindert, dass Datumsbestandteile
+  // (z. B. „23.03" aus „23.03.2026") und Prozentwerte (z. B. „20,00" aus
+  // „20,00%") fälschlich als Preise gezählt werden: Auf eine gültige
+  // Preis-Zahl darf keine weitere Ziffer, kein Komma, kein Punkt und kein
+  // Prozentzeichen folgen.
+  final RegExp fallbackPricePattern =
+      RegExp(r'(\d{1,6}[.,]\d{2})(?![.,\d%])');
   double maxAmount = 0.0;
-  for (final m in pricePattern.allMatches(text)) {
+  for (final m in fallbackPricePattern.allMatches(text)) {
     final value = double.tryParse(m.group(1)!.replaceAll(',', '.')) ?? 0.0;
     if (value > maxAmount) {
       maxAmount = value;
@@ -255,57 +267,76 @@ String _formatPriceComma(double price) =>
 /// Diese Funktion wird von [parseItemsImpl] als Fallback aufgerufen, wenn
 /// die primäre Look-Ahead-Logik keine Artikel gefunden hat.
 ///
-/// Algorithmus (Heuristik-Queue-Logik):
+/// Algorithmus (Two-List-Pairing):
 ///   1. Jede Zeile wird durch einen aggressiven Junk-Filter geleitet
 ///      (ATU, EFSTA, Buchung, Contactless, GmbH, Payback, Hash-Codes, …).
-///   2. Preiszahlen (X,XX) werden in [tempPrices] gesammelt; Duplikate,
-///      negative Beträge und MwSt-Beträge (Preis direkt nach MwSt-Label)
-///      werden ignoriert.
-///   3. Produktzeilen (Zeilen mit Buchstaben, die nicht Junk sind) werden
-///      in [tempNames] gesammelt.
-///   4. Match-Maker:
-///      - Gleich lang → paarweise Zuordnung in Reihenfolge des Erscheinens.
-///      - Mehr Preise als Namen → letzte N Preise nehmen (Summen/Terminal-
-///        beträge stehen oft am Ende) und den N Namen zuordnen.
-///      - Mehr Namen als Preise → so viele Paare wie möglich bilden.
+///   2. **Tax-Code-Strategie** (für SPAR/österreichische Kassenbons):
+///      - Preiszeilen mit Steuerklassen-Suffix (z. B. „1,59 A", „0,25 E") werden
+///        separat in [taxCodePrices] gesammelt.
+///      - Die Sammlung stoppt sobald die Summe der Tax-Code-Preise den
+///        Gesamtbetrag des Belegs erreicht (verhindert Aufnahme von Subtotals
+///        aus dem „Incl."-Abschnitt am Ende des Belegs).
+///      - Sind Tax-Code-Preise vorhanden, werden die ersten N Namen aus
+///        [tempNames] mit diesen Preisen gepaart (N = Anzahl Tax-Code-Preise).
+///   3. **Standard-Strategie** (Fallback, z. B. für dm-Kassenbons):
+///      - Alle Preis-Only-Zeilen werden in [tempPrices] gesammelt; Duplikate,
+///        negative Beträge und MwSt-Beträge werden ignoriert.
+///      - Match-Maker: letzte N Preise für N Namen (Summen/Terminalbeträge
+///        stehen oft früh in der Liste).
 @visibleForTesting
 List<String> parseItemsHeuristic(String text) {
   // ─── Aggressiver Junk-Filter ─────────────────────────────────────────────
-  // Enthält alle bekannten Nicht-Artikel-Schlüsselwörter aus dm-Kassenbons.
+  // Enthält alle bekannten Nicht-Artikel-Schlüsselwörter aus dm- und
+  // SPAR-Kassenbons.
   // Hinweis: „öffnungszeiten" enthält das deutsche Sonderzeichen „ö", das
   // kein ASCII-\w-Zeichen ist; \b würde hier nicht korrekt greifen, daher
   // wird dieses Wort ohne Wortgrenzen als Substring-Muster eingesetzt.
   final junkLinePattern = RegExp(
-    r'\bATU\b'                  // österreichische Steuernummer
-    r'|\bEFSTA\b'               // EFSTA-Finanzamt-Hash
-    r'|\bBuchung\b'             // Buchungs-/Zahlungszeile
-    r'|\b[Cc]ontactless\b'      // kontaktloses Zahlen
-    r'|\bZahlung\b'             // Zahlungszeile
-    r'|\bPayback\b|\bPAYBACK\b' // Treuepunkte
-    r'|\bVisa\b|\bMastercard\b' // Zahlungsarten
-    r'|\bGmbH\b'                // Firmenbezeichnung
-    r'|\bMarktgraben\b'         // dm-spezifische Adresszeile
-    r'|\bInnsbruck\b'           // Ortsname
-    r'|\bDanke\b'               // Grußformel
-    r'|\bEinkauf\b'             // Kassentext (z. B. "Für diesen Einkauf")
-    r'|\bMensch\b'              // dm-Slogan "Hier bin ich Mensch"
-    r'|öffnungszeiten'          // Öffnungszeiten-Hinweis
-    r'|\bNettobetr\b'           // Netto-Betrag-Zeile
-    r'|\bMWSt\b|\bMwSt\b'      // Steuersatz-Label (z. B. MWSt-Satz, MWSt)
-    r'|\bPunkte\b'              // Payback-Punkte
-    r'|\bDebit\b|\bCredit\b'    // Zahlungsart
-    r'|\bEFT\b'                 // Electronic Funds Transfer
-    r'|\bkauf\b'                // dm-Slogan-Wort ("Hier kauf ich ein")
-    r'|#',                      // Hash-Codes (z. B. #31514283*…)
+    r'\bATU\b'                      // österreichische Steuernummer
+    r'|\bEFSTA\b'                   // EFSTA-Finanzamt-Hash
+    r'|\bBuchung\b'                 // Buchungs-/Zahlungszeile
+    r'|\b[Cc]ontactless\b'          // kontaktloses Zahlen
+    r'|\bZahlung\b|\bZahl\b'        // Zahlungszeile (inkl. OCR-Split "Zahl ung")
+    r'|\bPayback\b|\bPAYBACK\b'     // Treuepunkte
+    r'|\bVisa\b|\bMastercard\b'     // Zahlungsarten
+    r'|\bGmbH\b'                    // Firmenbezeichnung
+    r'|\bMarktgraben\b'             // dm-spezifische Adresszeile
+    r'|\bInnsbruck\b'               // Ortsname
+    r'|\bDanke\b'                   // Grußformel
+    r'|\bEinkauf\b'                 // Kassentext (z. B. "Für diesen Einkauf")
+    r'|\bMensch\b'                  // dm-Slogan "Hier bin ich Mensch"
+    r'|öffnungszeiten'              // Öffnungszeiten-Hinweis
+    r'|\bNettobetr\b'               // Netto-Betrag-Zeile
+    r'|\bMWSt\b|\bMwSt\b|\bMHST\b' // Steuersatz-Labels
+    r'|\bPunkte\b'                  // Payback-Punkte
+    r'|\bDebit\b|\bCredit\b'        // Zahlungsart
+    r'|\bEFT\b'                     // Electronic Funds Transfer
+    r'|\bkauf\b'                    // dm-Slogan-Wort ("Hier kauf ich ein")
+    r'|\bVerarbeitung\b'            // Terminal-Meldung "Verarbeitung OK"
+    r'|\bKundenbeleg\b'             // Beleg-Bezeichnung
+    r'|\bRabattmarkerl\b'           // SPAR-Rabattmarkerl-Hinweis
+    r'|\bGutschein\b|\bGUTSCHEIN\b' // Rabatt-Gutschein
+    r'|#',                          // Hash-Codes (z. B. #31514283*…)
     caseSensitive: false,
   );
 
-  // Preis-Only-Muster (identisch mit parseItemsImpl)
-  final priceOnlyPattern = RegExp(r'^\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$');
+  // Mengenberechnungs-Muster (z. B. "2 X 1,19", "4x1,59"): Diese Zeilen
+  // sind keine Produktnamen und keine eigenständigen Preise.
+  final qtyCalcPattern = RegExp(r'^\d+\s*[xX]\s*\d{1,4}[.,]\d{2}');
+
+  // Preis-Only-Muster: Tax-Code muss durch Leerzeichen getrennt sein.
+  final priceOnlyPattern =
+      RegExp(r'^\d{1,4}[.,]\d{2}(?:\s+[A-Za-z0-9])?\s*$');
+
+  // Tax-Code-Preis-Muster: Preis + PFLICHT-Leerzeichen + einzelner Großbuchstabe
+  // (z. B. "1,59 A", "0,25 E", "1,39 B"). Kennzeichnet Artikel-Einzel­preise
+  // auf österreichischen Kassenbons.
+  final taxCodePricePattern =
+      RegExp(r'^\d{1,4}[.,]\d{2}\s+[A-Z]\s*$');
 
   // Standalone-MwSt-Label: Preis auf der Folgezeile ist ein Steuerbetrag
   final mwstLabelPattern = RegExp(
-    r'^\s*(?:MWSt|MwSt)\s*$',
+    r'^\s*(?:MWSt|MwSt|MHST)\s*$',
     caseSensitive: false,
   );
 
@@ -318,9 +349,18 @@ List<String> parseItemsHeuristic(String text) {
       .where((l) => l.isNotEmpty)
       .toList();
 
+  // ─── Gesamtbetrag für Tax-Code-Preisvalidierung ──────────────────────────
+  // Wird genutzt, um bei SPAR-Kassenbons die Sammlung von Tax-Code-Preisen
+  // zu stoppen, sobald ihre Summe den Gesamtbetrag erreicht.
+  final receiptTotal = parseAmountImpl(text);
+
   final tempNames = <String>[];
   final tempPrices = <double>[];
   final seenPrices = <double>{};
+
+  // Tax-Code-Preise (SPAR-Strategie): In Erscheinungsreihenfolge, ohne Dedup.
+  final taxCodePrices = <double>[];
+  double taxCodeSum = 0.0;
 
   for (int idx = 0; idx < allLines.length; idx++) {
     final line = allLines[idx];
@@ -335,6 +375,10 @@ List<String> parseItemsHeuristic(String text) {
     // Negative Beträge (z. B. "-3,90")
     if (line.startsWith('-')) continue;
 
+    // Zeilen mit Doppelpunkt: Terminal-IDs, Labels (z. B. "Trm-Id:",
+    // "Betrag EUR:", "SUMME:", "Acq-Id:", "(Basis: 10,51)")
+    if (line.contains(':')) continue;
+
     // Zeilen, die mit einem Datum beginnen (z. B. "21.03.2026 13:45 …")
     if (RegExp(r'^\d{1,2}\.\d{1,2}\.').hasMatch(line)) continue;
 
@@ -345,8 +389,31 @@ List<String> parseItemsHeuristic(String text) {
     if (pureShortNumberPattern.hasMatch(line)) continue;
 
     // Allein stehende Schlüsselwörter ohne Produktbezug
-    if (RegExp(r'^(?:SUMME|TOTAL|GESAMT|EUR|€)$', caseSensitive: false)
+    if (RegExp(r'^(?:SUMME|TOTAL|GESAMT|EUR|€|excl|incl)\.?$',
+            caseSensitive: false)
         .hasMatch(line)) continue;
+
+    // Mengenberechnungs-Zeilen (z. B. "2 X 1,19") überspringen
+    if (qtyCalcPattern.hasMatch(line)) continue;
+
+    // Zeilen, die mit einer öffnenden Klammer beginnen (z. B. "(Basis: …)")
+    if (line.startsWith('(')) continue;
+
+    // Tax-Code-Preis-Zeile: Preis + Steuerklassen-Buchstabe (z. B. "1,59 A")
+    // Wird parallel zu den normalen Preisen gesammelt (SPAR-Strategie).
+    if (taxCodePricePattern.hasMatch(line)) {
+      // Nur sammeln, bis die Summe den Gesamtbetrag erreicht hat
+      if (receiptTotal <= 0 || taxCodeSum < receiptTotal - 0.005) {
+        final rawPrice = line.split(RegExp(r'\s+'))[0].replaceAll(',', '.');
+        final price = double.tryParse(rawPrice);
+        if (price != null && price > 0) {
+          taxCodePrices.add(price);
+          taxCodeSum += price;
+        }
+      }
+      // Tax-Code-Zeilen auch als normale Preis-Only-Zeilen behandeln
+      // (für Standard-Fallback-Strategie)
+    }
 
     // Preis-Zeile: Betrag in tempPrices aufnehmen
     if (priceOnlyPattern.hasMatch(line)) {
@@ -368,19 +435,41 @@ List<String> parseItemsHeuristic(String text) {
     // Reine Codes/Kürzel ohne Leerzeichen (z. B. "XXX9471", "O503") filtern
     if (RegExp(r'^[A-Z0-9]{4,12}$').hasMatch(line)) continue;
 
-    // Reine Zeitangaben (z. B. "13:46:00") filtern
+    // Reine Zeitangaben (z. B. "13:46:00") filtern – werden bereits durch
+    // den Doppelpunkt-Filter oben abgefangen, hier als Sicherheitsnetz.
     if (RegExp(r'^\d{1,2}:\d{2}(:\d{2})?$').hasMatch(line)) continue;
 
     tempNames.add(line);
   }
 
   debugPrint(
-      '[OCR-Heuristic] tempNames=$tempNames, tempPrices=$tempPrices');
+      '[OCR-Heuristic] tempNames=$tempNames, tempPrices=$tempPrices, '
+      'taxCodePrices=$taxCodePrices');
 
-  if (tempNames.isEmpty || tempPrices.isEmpty) return [];
+  if (tempNames.isEmpty) return [];
 
   // ─── Match-Maker: Namen und Preise zusammenführen ────────────────────────
   final result = <String>[];
+
+  // ─── Strategie 1: Tax-Code-Preise (SPAR-Kassenbons) ─────────────────────
+  // Wenn Tax-Code-Preise gefunden wurden UND ihre Anzahl ≤ Namen-Anzahl,
+  // werden die ersten N Namen mit diesen Preisen gepaart.
+  if (taxCodePrices.isNotEmpty && taxCodePrices.length <= tempNames.length) {
+    final n = taxCodePrices.length;
+    for (int i = 0; i < n; i++) {
+      result.add('${tempNames[i]}  ${_formatPriceComma(taxCodePrices[i])}');
+    }
+    for (final r in result) {
+      final (:name, :price) = parseLineItem(r);
+      debugPrint(
+          '[OCR-Heuristic/TaxCode] Matched: Name=$name, Price=${price ?? "–"}');
+    }
+    return result;
+  }
+
+  // ─── Strategie 2: Standard-Heuristik (dm-Kassenbons) ────────────────────
+  if (tempPrices.isEmpty) return [];
+
   if (tempNames.length == tempPrices.length) {
     // Perfekte Übereinstimmung: paarweise in Reihenfolge des Erscheinens
     for (int i = 0; i < tempNames.length; i++) {
@@ -499,16 +588,20 @@ List<String> parseItemsImpl(String text) {
 
   // ─── 4. Artikel-Erkennungs-Muster ────────────────────────────────────────
 
-  // Preis-Only: die ganze Zeile ist nur ein Preis (z. B. "1,65", "2.99 A")
+  // Preis-Only: die ganze Zeile ist nur ein Preis (z. B. "1,65", "2,99 A").
+  // Ein Tax-Code (Buchstabe oder Ziffer) muss durch ein Leerzeichen vom
+  // Preis getrennt sein. "0,33L" (Volumen ohne Leerzeichen) wird damit NICHT
+  // als Preis-Only-Zeile erkannt.
   final RegExp priceOnlyPattern = RegExp(
-    r'^\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
+    r'^\d{1,4}[.,]\d{2}(?:\s+[A-Za-z0-9])?\s*$',
   );
 
   // Vollständiges Artikel-Muster: Text + Preis am Ende.
   // Lookahead stellt sicher, dass mindestens ein Buchstabe im Namensteil
   // enthalten ist, um reine Zahlenzeilen auszuschließen.
+  // Der Tax-Code muss durch ein Leerzeichen vom Preis getrennt sein.
   final RegExp itemWithPricePattern = RegExp(
-    r'(?=.*[A-Za-zÄÖÜäöüß]).+\s+\d{1,4}[.,]\d{2}\s*[A-Za-z0-9]?\s*$',
+    r'(?=.*[A-Za-zÄÖÜäöüß]).+\s+\d{1,4}[.,]\d{2}(?:\s+[A-Za-z0-9])?\s*$',
   );
 
   // Mengenberechnungs-Muster: z. B. "4 X 1,59" oder "2x0,99"

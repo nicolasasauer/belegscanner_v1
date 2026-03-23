@@ -838,4 +838,226 @@ void main() {
       expect(normalizeName('0BIO'), equals('Obio'));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Tests für parseLineItem – Volumenangaben ohne Leerzeichen
+  // ---------------------------------------------------------------------------
+
+  group('parseLineItem – Volumenangaben (kein Leerzeichen vor Einheit)', () {
+    test(
+        '"COKE ZERO ZERO 0,33L" – "0,33L" ist Volumen, kein Preis '
+        '(kein Leerzeichen vor "L")', () {
+      final (:name, :price) = parseLineItem('COKE ZERO ZERO 0,33L');
+      // Kein gültiger Preis, da "L" direkt an die Zahl angehängt ist
+      expect(price, isNull);
+      expect(name, equals('COKE ZERO ZERO 0,33L'));
+    });
+
+    test('"Milch 1L 1,09 A" – Preis 1,09 mit Tax-Code " A" wird erkannt', () {
+      final (:name, :price) = parseLineItem('Milch 1L 1,09 A');
+      expect(price, closeTo(1.09, 0.001));
+      expect(name, equals('Milch 1L'));
+    });
+
+    test('"Wasser 0,5L 0,79" – Preis 0,79 wird erkannt, "0,5L" bleibt im Namen',
+        () {
+      final (:name, :price) = parseLineItem('Wasser 0,5L 0,79');
+      expect(price, closeTo(0.79, 0.001));
+      expect(name, equals('Wasser 0,5L'));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests für parseItemsImpl / parseAmountImpl – SPAR-Kassenbon
+  // (Scrambled OCR: Namen und Preise in getrennten Textblöcken)
+  // ---------------------------------------------------------------------------
+
+  group('parseItemsImpl – SPAR-Kassenbon (scrambled, Tax-Code Prices)', () {
+    // Simulierter OCR-Output eines physischen SPAR-Kassenbons:
+    //   - "ALPRO SOJA" erscheint VOR der Datumszeile → primäre Header-Cut-Logik
+    //     übersieht diesen Artikel.
+    //   - "SUMME:" erscheint in der MITTE der Artikelliste (nicht am Ende) →
+    //     Footer-Cut stoppt die Suche zu früh.
+    //   - "PFAND EINWEG" und "SBUDGET STRIEZEL" erscheinen NACH der SUMME-Zeile.
+    //   - Die tatsächlichen Artikel-Preise befinden sich am Ende des Textes im
+    //     Format "X,XX Y" (Tax-Code-Format, z. B. "1,59 A").
+    //   - Ergebnis: primäre Look-Ahead-Logik findet 0 Artikel →
+    //     parseItemsHeuristic greift als Fallback.
+    //   - Erwartetes Ergebnis: 6 Artikel mit Gesamtbetrag 10,76 €.
+    const sparReceiptText =
+        'ALPRO SOJA\n'
+        'Ihr Einkauf am 23.03.2026 um 19:15 Uhr\n'
+        'VEGGIE VEG.KRAEUTERB\n'
+        '2 X 1,19\n'
+        'SBUDGET GNOCCHI 750G\n'
+        '2 X 1,48\n'
+        'COKE ZERO ZERO 0,33L\n'
+        'SUMME:\n'
+        'PFAND EINWEG\n'
+        'SBUDGET STRIEZEL\n'
+        'GUTSCHEIN\n'
+        'SPARO\n'
+        'ZAHLUNG MASTERCARD\n'
+        'Museumstraße 16\n'
+        '6020 Innsbruck\n'
+        '0512 571052\n'
+        'Zahl ung\n'
+        'DEBIT MASTERCARD\n'
+        'Contactless\n'
+        '23.03.2026\n'
+        'Trm-Id:\n'
+        'AID:\n'
+        'XXXX XXXX XXXX 6180\n'
+        'Trx Seq-Nr:\n'
+        'Trx Ref. Nr:\n'
+        'Acq-Id:\n'
+        '*** Kundenbeleg x**\n'
+        'Betrag EUR:\n'
+        '0,00%\n'
+        '10,00%\n'
+        '0,25\n'
+        'Autorisierungs-Nr:\n'
+        '20,00%\n'
+        'Verarbeitung 0K\n'
+        'excl.\n'
+        '0,25\n'
+        '8,29\n'
+        '1,16\n'
+        'Ihre Rabattmarkerl heute:\n'
+        '(Basis: 10,51)\n'
+        'MHST.\n'
+        '0,00\n'
+        '0,33\n'
+        'EUR\n'
+        '1,59 A\n'
+        '0,23\n'
+        '2,38 A\n'
+        '2,96 A\n'
+        '1,39 B\n'
+        '0,25 E\n'
+        'A0000000041010\n'
+        '2,19 A\n'
+        '0,00 E\n'
+        '233381\n'
+        '59536748863\n'
+        '10,76\n'
+        '10,76\n'
+        '19:15:51\n'
+        '23613278\n'
+        '940610\n'
+        '999100200\n'
+        '10,76\n'
+        'Incl.\n'
+        '0,25 E\n'
+        '9,12 A\n'
+        '1,39 B\n';
+
+    test('Erkennt genau 6 Artikel (via Heuristik-Fallback)', () {
+      final items = parseItemsImpl(sparReceiptText);
+      expect(items.length, equals(6),
+          reason:
+              'SPAR-Kassenbon: 6 Artikel erwartet (Alpro, Veggie, Gnocchi, Coke, Pfand, Striezel)');
+    });
+
+    test('ALPRO SOJA: Preis = 1,59', () {
+      final items = parseItemsImpl(sparReceiptText);
+      final item = items.firstWhere(
+        (i) => i.toUpperCase().contains('ALPRO'),
+        orElse: () => '',
+      );
+      expect(item, isNotEmpty, reason: 'ALPRO SOJA sollte erkannt werden');
+      expect(parseLineItem(item).price, closeTo(1.59, 0.001));
+    });
+
+    test('VEGGIE VEG.KRAEUTERB: Preis = 2,38', () {
+      final items = parseItemsImpl(sparReceiptText);
+      final item = items.firstWhere(
+        (i) => i.toUpperCase().contains('VEGGIE'),
+        orElse: () => '',
+      );
+      expect(item, isNotEmpty, reason: 'VEGGIE sollte erkannt werden');
+      expect(parseLineItem(item).price, closeTo(2.38, 0.001));
+    });
+
+    test('SBUDGET GNOCCHI 750G: Preis = 2,96', () {
+      final items = parseItemsImpl(sparReceiptText);
+      final item = items.firstWhere(
+        (i) => i.toUpperCase().contains('GNOCCHI'),
+        orElse: () => '',
+      );
+      expect(item, isNotEmpty, reason: 'GNOCCHI sollte erkannt werden');
+      expect(parseLineItem(item).price, closeTo(2.96, 0.001));
+    });
+
+    test('COKE ZERO ZERO 0,33L: Preis = 1,39 (nicht 0,33 Volumen)', () {
+      final items = parseItemsImpl(sparReceiptText);
+      final item = items.firstWhere(
+        (i) => i.toUpperCase().contains('COKE'),
+        orElse: () => '',
+      );
+      expect(item, isNotEmpty, reason: 'COKE sollte erkannt werden');
+      final (:name, :price) = parseLineItem(item);
+      expect(price, closeTo(1.39, 0.001),
+          reason: 'Preis muss 1,39 sein, nicht 0,33 (Volumenangabe)');
+      expect(name, contains('COKE'));
+    });
+
+    test('PFAND EINWEG: Preis = 0,25', () {
+      final items = parseItemsImpl(sparReceiptText);
+      final item = items.firstWhere(
+        (i) => i.toUpperCase().contains('PFAND'),
+        orElse: () => '',
+      );
+      expect(item, isNotEmpty, reason: 'PFAND EINWEG sollte erkannt werden');
+      expect(parseLineItem(item).price, closeTo(0.25, 0.001));
+    });
+
+    test('SBUDGET STRIEZEL: Preis = 2,19', () {
+      final items = parseItemsImpl(sparReceiptText);
+      final item = items.firstWhere(
+        (i) => i.toUpperCase().contains('STRIEZEL'),
+        orElse: () => '',
+      );
+      expect(item, isNotEmpty, reason: 'SBUDGET STRIEZEL sollte erkannt werden');
+      expect(parseLineItem(item).price, closeTo(2.19, 0.001));
+    });
+
+    test('Gesamtbetrag 10,76 € korrekt erkannt', () {
+      expect(parseAmountImpl(sparReceiptText), closeTo(10.76, 0.001));
+    });
+
+    test('Keine Junk-Einträge (SUMME, Mastercard, Trm-Id, excl, Incl) '
+        'erscheinen in der Artikelliste', () {
+      final items = parseItemsImpl(sparReceiptText);
+      for (final item in items) {
+        expect(item.toLowerCase(), isNot(contains('summe')));
+        expect(item.toLowerCase(), isNot(contains('mastercard')));
+        expect(item.toLowerCase(), isNot(contains('trm')));
+        expect(item.toLowerCase(), isNot(contains('excl')));
+        expect(item.toLowerCase(), isNot(contains('incl')));
+        expect(item.toLowerCase(), isNot(contains('museumstraße')));
+      }
+    });
+
+    test('Qty-Calc-Zeilen ("2 X 1,19", "2 X 1,48") erscheinen nicht als Namen',
+        () {
+      final items = parseItemsImpl(sparReceiptText);
+      for (final item in items) {
+        expect(item, isNot(matches(r'^\d+\s*[xX]\s*\d')),
+            reason:
+                'Mengenberechnungszeilen dürfen nicht als Artikel landen');
+      }
+    });
+
+    test(
+        'Summe der erkannten Artikel-Preise entspricht dem Gesamtbetrag 10,76',
+        () {
+      final items = parseItemsImpl(sparReceiptText);
+      final total = items.fold<double>(
+        0.0,
+        (sum, item) => sum + (parseLineItem(item).price ?? 0.0),
+      );
+      expect(total, closeTo(10.76, 0.01));
+    });
+  });
 }

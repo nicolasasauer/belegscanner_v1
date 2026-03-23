@@ -38,7 +38,7 @@ dependencies:
   path_provider: ^2.1.4
 
   # Persistente Einstellungen (z.B. max_concurrent_tasks)
-  shared_preferences: ^2.3.5
+  shared_preferences: ^2.3.3
 
   # SHA-256-Hashing für Duplikatserkennung
   crypto: ^3.0.6

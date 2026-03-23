@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-    <!-- Galerie-Schreibzugriff für API ≤ 29 (benötigt von gal) -->
+    <!-- Galerie-Schreibzugriff für API ≤ 29 (benötigt von image_gallery_saver) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29"/>
 

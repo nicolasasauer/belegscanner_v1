@@ -2,16 +2,13 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:intl/intl.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../models/receipt.dart';
 import '../services/database_service.dart';
+import '../services/export_service.dart';
 import '../services/ocr_service.dart';
+import '../widgets/receipt_detail_view.dart';
 import 'category_management_page.dart';
 
 /// Hauptseite der Bong-Scanner-App.
@@ -22,7 +19,6 @@ class HomePage extends StatefulWidget {
   const HomePage({super.key, this.databaseService});
 
   /// Optionaler gemeinsam genutzter Datenbankservice.
-  /// Wenn null, wird eine eigene Instanz erstellt.
   final DatabaseService? databaseService;
 
   @override
@@ -34,31 +30,14 @@ class _HomePageState extends State<HomePage> {
   // Zustand
   // ---------------------------------------------------------------------------
 
-  /// Alle gespeicherten Belege (Master-Liste – wird nie direkt angezeigt).
   final List<Receipt> _receipts = [];
-
-  /// Gibt an, ob aktuell ein Scan/Import läuft.
   bool _isScanning = false;
-
-  /// Ausgewählter Tag für den Filter (null = kein Filter).
   int? _selectedDay;
-
-  /// Ausgewählter Monat für den Filter (null = kein Filter).
   int? _selectedMonth;
-
-  /// Ausgewähltes Jahr für den Filter (null = kein Filter).
   int? _selectedYear;
-
-  /// Controller für die Suchleiste.
   final TextEditingController _searchController = TextEditingController();
-
-  /// Aktueller Suchbegriff (leer = kein Suchfilter).
   String _searchQuery = '';
-
-  /// Gibt an, ob die Suchleiste in der AppBar aktiv ist.
   bool _isSearching = false;
-
-  /// Gibt an, ob das FAB-Geschwindigkeitsdial-Menü geöffnet ist.
   bool _isFabExpanded = false;
 
   // ---------------------------------------------------------------------------
@@ -68,13 +47,10 @@ class _HomePageState extends State<HomePage> {
   late final DatabaseService _databaseService;
   late final OcrService _ocrService;
 
-  /// Formatter für Euro-Beträge (z. B. "12,50 €").
   final NumberFormat _currencyFormat = NumberFormat.currency(
     locale: 'de_DE',
     symbol: '€',
   );
-
-  /// Formatter für das Anzeigedatum (z. B. "22. März 2026").
   final DateFormat _dateFormat = DateFormat('d. MMMM yyyy', 'de_DE');
 
   // ---------------------------------------------------------------------------
@@ -86,9 +62,6 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _databaseService = widget.databaseService ?? DatabaseService();
     _ocrService = OcrService(databaseService: _databaseService);
-    // Android 16 killt Apps, die im ersten Frame zu viel CPU beanspruchen.
-    // Kleine Verzögerung gibt dem Framework Zeit, den ersten Frame zu rendern,
-    // bevor Datenbank und ML Kit initialisiert werden.
     Future.delayed(const Duration(milliseconds: 500), _loadReceipts);
   }
 
@@ -98,7 +71,6 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  /// Lädt alle gespeicherten Belege aus der lokalen Datenbank.
   Future<void> _loadReceipts() async {
     final receipts = await _databaseService.getAllReceipts();
     if (mounted) {
@@ -114,14 +86,8 @@ class _HomePageState extends State<HomePage> {
   // Berechnete Eigenschaften
   // ---------------------------------------------------------------------------
 
-  /// Gibt die gefilterte Beleg-Liste zurück.
-  ///
-  /// Kombiniert Datum-Filter (Tag/Monat/Jahr) mit dem Volltext-Suchfilter.
-  /// Der Suchfilter prüft Händlername (erster Artikel), Gesamtbetrag und
-  /// alle Stichwörter in den erkannten Einzelpositionen.
   List<Receipt> get _filteredReceipts {
     return _receipts.where((receipt) {
-      // Datum-Filter
       if (_selectedDay != null && receipt.date.day != _selectedDay) {
         return false;
       }
@@ -131,29 +97,19 @@ class _HomePageState extends State<HomePage> {
       if (_selectedYear != null && receipt.date.year != _selectedYear) {
         return false;
       }
-
-      // Volltext-Suchfilter
       if (_searchQuery.isNotEmpty) {
         final q = _searchQuery.toLowerCase();
-
-        // Händlername: erste OCR-Zeile als Heuristik
         final matchesMerchant = receipt.items.isNotEmpty &&
             receipt.items.first.toLowerCase().contains(q);
-
-        // Gesamtbetrag: Zahl und formatierter String
         final matchesAmount =
             receipt.totalAmount.toString().contains(q) ||
                 _currencyFormat.format(receipt.totalAmount).contains(q);
-
-        // Stichwörter in allen erkannten Einzelpositionen
         final matchesItems =
             receipt.items.any((item) => item.toLowerCase().contains(q));
-
         if (!matchesMerchant && !matchesAmount && !matchesItems) {
           return false;
         }
       }
-
       return true;
     }).toList();
   }
@@ -162,8 +118,6 @@ class _HomePageState extends State<HomePage> {
   // Aktionen
   // ---------------------------------------------------------------------------
 
-  /// Öffnet den Datumswähler und setzt Tag-/Monat-/Jahres-Filter auf das
-  /// gewählte Datum (alle drei Felder werden gleichzeitig gesetzt).
   Future<void> _pickDay() async {
     final picked = await showDatePicker(
       context: context,
@@ -180,7 +134,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Öffnet den Datumswähler und setzt den Monats-/Jahres-Filter.
   Future<void> _pickMonth() async {
     final picked = await showDatePicker(
       context: context,
@@ -197,7 +150,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Öffnet den Datumswähler und setzt ausschließlich den Jahres-Filter.
   Future<void> _pickYear() async {
     final picked = await showDatePicker(
       context: context,
@@ -214,23 +166,13 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Startet den Scan-Vorgang:
-  /// 1. Kamera öffnen → Foto aufnehmen
-  /// 2. Text per OCR erkennen
-  /// 3. Beleg aus Text parsen und in Liste speichern
   Future<void> _startScan() async {
     setState(() => _isScanning = true);
-
     try {
       final receipt = await _ocrService.scanReceipt();
-
       if (receipt != null && mounted) {
         await _databaseService.insertReceipt(receipt);
-        setState(() {
-          _receipts.add(receipt);
-        });
-
-        // Hinweis anzeigen, wenn kein Betrag erkannt wurde
+        setState(() => _receipts.add(receipt));
         if (receipt.totalAmount == 0.0 && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -243,7 +185,6 @@ class _HomePageState extends State<HomePage> {
         }
       }
     } catch (e) {
-      // Freundliche Fehlermeldung ohne technische Details
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -260,7 +201,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Setzt alle Filter zurück.
   void _clearFilters() {
     setState(() {
       _selectedDay = null;
@@ -269,7 +209,6 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// Schließt die Suchleiste und löscht den Suchbegriff.
   void _clearSearch() {
     setState(() {
       _searchController.clear();
@@ -278,20 +217,13 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// Importiert einen Beleg aus der Gerätegalerie, führt OCR aus und speichert
-  /// das Ergebnis – identische Pipeline wie [_startScan].
   Future<void> _importFromGallery() async {
     setState(() => _isScanning = true);
-
     try {
       final receipt = await _ocrService.importFromGallery();
-
       if (receipt != null && mounted) {
         await _databaseService.insertReceipt(receipt);
-        setState(() {
-          _receipts.add(receipt);
-        });
-
+        setState(() => _receipts.add(receipt));
         if (receipt.totalAmount == 0.0 && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -320,84 +252,35 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Löscht einen Beleg aus der Datenbank und entfernt ggf. die Bilddatei.
   Future<void> _deleteReceipt(Receipt receipt) async {
     await _databaseService.deleteReceipt(receipt.id);
-
-    // Bilddatei vom Speicher entfernen, falls vorhanden
     if (receipt.imagePath != null) {
       final imageFile = File(receipt.imagePath!);
       if (imageFile.existsSync()) {
         try {
           await imageFile.delete();
-        } catch (_) {
-          // Datei konnte nicht gelöscht werden (z. B. fehlende Rechte) –
-          // DB-Eintrag wurde bereits entfernt, daher trotzdem fortfahren.
-        }
+        } catch (_) {}
       }
     }
-
     if (mounted) {
-      setState(() {
-        _receipts.removeWhere((r) => r.id == receipt.id);
-      });
+      setState(() => _receipts.removeWhere((r) => r.id == receipt.id));
     }
   }
 
-  /// Exportiert alle Belege als CSV-Datei und teilt sie über das native Share-Sheet.
-  ///
-  /// Spalten: Datum, Händler (falls erkannt), Gesamtbetrag, Artikel (semikolon-getrennt).
-  Future<void> _exportToCsv() async {
-    if (_receipts.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Keine Belege zum Exportieren vorhanden.')),
-      );
-      return;
-    }
+  // ---------------------------------------------------------------------------
+  // Export / Sharing  (dünne UI-Wrapper um ExportService)
+  // ---------------------------------------------------------------------------
 
+  /// Teilt das Belegbild über das native Share-Sheet.
+  Future<void> _shareReceipt(Receipt receipt) async {
     try {
-      final buffer = StringBuffer();
-      // CSV-Header
-      buffer.writeln('Datum;Händler;Gesamtbetrag (EUR);Artikel');
-
-      final amountFormat = NumberFormat('#,##0.00', 'de_DE');
-      final exportDateFormat = DateFormat('yyyy-MM-dd', 'de_DE');
-
-      for (final receipt in _receipts) {
-        final date = exportDateFormat.format(receipt.date);
-        // Händler: erste OCR-Zeile als best-effort-Näherungswert für den
-        // Händlernamen. OCR-Text ist nicht immer in dieser Reihenfolge –
-        // dies ist eine Heuristik ohne Garantie.
-        final merchant = receipt.items.isNotEmpty
-            ? _escapeCsvField(receipt.items.first)
-            : '';
-        final amount = amountFormat.format(receipt.totalAmount);
-        // Artikel: alle Zeilen außer der ersten (Händler), durch Pipe getrennt
-        final items = receipt.items.length > 1
-            ? _escapeCsvField(receipt.items.sublist(1).join(' | '))
-            : '';
-
-        buffer.writeln('$date;$merchant;$amount;$items');
-      }
-
-      // Temporäre Datei im App-Cache-Verzeichnis anlegen
-      final cacheDir = await _getCacheDirectory();
-      final file = File(p.join(cacheDir, 'belege_export.csv'));
-      await file.writeAsString(buffer.toString(), flush: true);
-
-      if (!mounted) return;
-
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'text/csv')],
-        subject: 'Bong-Scanner Export',
-        text: 'Exportierte Belege aus der Bong-Scanner-App.',
-      );
+      await ExportService.shareImage(receipt);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text(
-              'Export fehlgeschlagen. Bitte versuche es erneut.',
+              'Teilen fehlgeschlagen. Bitte erneut versuchen.',
             ),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
@@ -406,94 +289,11 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Gibt das app-private Verzeichnis zurück, das für temporäre Export-Dateien
-  /// genutzt wird. Delegiert an [DatabaseService.getDatabasesDirectory].
-  Future<String> _getCacheDirectory() async {
-    return _databaseService.getDatabasesDirectory();
-  }
-
-  /// Maskiert ein CSV-Feld gemäß RFC 4180:
-  /// Enthält das Feld ein Semikolon oder Anführungszeichen,
-  /// wird es in doppelte Anführungszeichen eingeschlossen.
-  String _escapeCsvField(String value) {
-    // Zeilenumbrüche durch Leerzeichen ersetzen
-    final cleaned = value.replaceAll('\n', ' ').replaceAll('\r', '');
-    if (cleaned.contains(';') || cleaned.contains('"')) {
-      return '"${cleaned.replaceAll('"', '""')}"';
-    }
-    return cleaned;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Export / Sharing
-  // ---------------------------------------------------------------------------
-
-  /// Generiert einen sprechenden Dateinamen für den Export des Belegbilds.
-  ///
-  /// Format: `YYYY-MM-DD_Händler_Betrag.jpg`
-  /// Beispiel: `2026-03-23_Spar_10.76.jpg`
-  String _getExportFileName(Receipt receipt) {
-    final dateStr = DateFormat('yyyy-MM-dd').format(receipt.date);
-    final rawMerchant = receipt.items.isNotEmpty
-        ? parseLineItem(receipt.items.first).name
-        : 'Unbekannt';
-    // Verbotene Zeichen und Leerzeichen aus dem Händlernamen entfernen
-    final sanitizedMerchant =
-        rawMerchant.replaceAll(RegExp(r'[ /\\:*?"<>|]'), '');
-    final merchant =
-        sanitizedMerchant.isNotEmpty ? sanitizedMerchant : 'Unbekannt';
-    final totalStr =
-        receipt.totalAmount.toStringAsFixed(2).replaceAll(',', '.');
-    return '${dateStr}_${merchant}_$totalStr.jpg';
-  }
-
-  /// Erstellt eine temporäre Kopie des Belegbilds mit dem Export-Dateinamen
-  /// und öffnet das native Share-Sheet.
-  Future<void> _shareReceipt(Receipt receipt) async {
-    final imagePath = receipt.imagePath;
-    if (imagePath == null) return;
-
-    try {
-      final fileName = _getExportFileName(receipt);
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = p.join(tempDir.path, fileName);
-      await File(imagePath).copy(tempPath);
-
-      await Share.shareXFiles([XFile(tempPath)]);
-
-      // Temporäre Datei nach dem Teilen aufräumen
-      final tempFile = File(tempPath);
-      if (await tempFile.exists()) await tempFile.delete();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Teilen fehlgeschlagen. Bitte erneut versuchen.'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-  /// Speichert das Belegbild mit dem Export-Dateinamen in der Gerätegalerie.
+  /// Speichert das Belegbild in der Gerätegalerie.
   Future<void> _saveToGallery(Receipt receipt) async {
-    final imagePath = receipt.imagePath;
-    if (imagePath == null) return;
-
     try {
-      final fileName = _getExportFileName(receipt);
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = p.join(tempDir.path, fileName);
-      await File(imagePath).copy(tempPath);
-
-      final result = await ImageGallerySaver.saveFile(tempPath);
-
-      // Temporäre Datei nach dem Speichern aufräumen
-      final tempFile = File(tempPath);
-      if (await tempFile.exists()) await tempFile.delete();
-
-      final success = result is Map && result['isSuccess'] == true;
+      final fileName = ExportService.getExportFileName(receipt);
+      final success = await ExportService.saveImageToGallery(receipt);
       if (mounted) {
         if (success) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -524,6 +324,37 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Exportiert alle Belege als CSV und teilt sie über das Share-Sheet.
+  Future<void> _exportToCsv() async {
+    if (_receipts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Keine Belege zum Exportieren vorhanden.'),
+        ),
+      );
+      return;
+    }
+    try {
+      final cacheDir = await _databaseService.getDatabasesDirectory();
+      await ExportService.shareCsv(_receipts, cacheDir);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Export fehlgeschlagen. Bitte versuche es erneut.',
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Navigation
+  // ---------------------------------------------------------------------------
+
   /// Zeigt die Detail-Ansicht eines Belegs in einem BottomSheet.
   void _showReceiptDetails(Receipt receipt) {
     showModalBottomSheet(
@@ -533,12 +364,10 @@ class _HomePageState extends State<HomePage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => Padding(
-        // Keyboard-Padding: schiebt den Sheet-Inhalt nach oben, sobald die
-        // Tastatur eingeblendet wird.
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewInsetsOf(ctx).bottom,
         ),
-        child: _ReceiptDetailSheet(
+        child: ReceiptDetailView(
           receipt: receipt,
           dateFormat: _dateFormat,
           currencyFormat: _currencyFormat,
@@ -568,7 +397,6 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        // Suche aktiv → Suchfeld im Titel; sonst normaler Titel
         title: _isSearching
             ? TextField(
                 controller: _searchController,
@@ -576,9 +404,7 @@ class _HomePageState extends State<HomePage> {
                 decoration: InputDecoration(
                   hintText: 'Händler, Betrag, Stichwort…',
                   border: InputBorder.none,
-                  hintStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
+                  hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
                 ),
                 style: TextStyle(color: colorScheme.onSurface),
                 onChanged: (value) => setState(() => _searchQuery = value),
@@ -586,7 +412,6 @@ class _HomePageState extends State<HomePage> {
             : const Text('Bong-Scanner'),
         centerTitle: !_isSearching,
         actions: [
-          // Such-Icon / Schließen-Icon
           if (_isSearching)
             IconButton(
               icon: const Icon(Icons.close),
@@ -599,14 +424,12 @@ class _HomePageState extends State<HomePage> {
               tooltip: 'Belege durchsuchen',
               onPressed: () => setState(() => _isSearching = true),
             ),
-          // CSV-Export-Button (nur wenn nicht in Suche)
           if (_receipts.isNotEmpty && !_isSearching)
             IconButton(
               icon: const Icon(Icons.upload_file_outlined),
               tooltip: 'Belege als CSV exportieren',
               onPressed: _isScanning ? null : _exportToCsv,
             ),
-          // Filter zurücksetzen (nur wenn nicht in Suche)
           if ((_selectedDay != null ||
                   _selectedMonth != null ||
                   _selectedYear != null) &&
@@ -617,7 +440,6 @@ class _HomePageState extends State<HomePage> {
               onPressed: _clearFilters,
             ),
         ],
-        // Ladeindikator direkt unter der AppBar während des Scans/Imports
         bottom: _isScanning
             ? const PreferredSize(
                 preferredSize: Size.fromHeight(4),
@@ -627,9 +449,6 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          // ------------------------------------------------------------------
-          // Filter-Bar
-          // ------------------------------------------------------------------
           _FilterBar(
             hasReceipts: _receipts.isNotEmpty,
             selectedDay: _selectedDay,
@@ -640,10 +459,6 @@ class _HomePageState extends State<HomePage> {
             onPickYear: _pickYear,
             onClearAll: _clearFilters,
           ),
-
-          // ------------------------------------------------------------------
-          // Beleg-Liste
-          // ------------------------------------------------------------------
           Expanded(
             child: Stack(
               children: [
@@ -666,37 +481,41 @@ class _HomePageState extends State<HomePage> {
                               alignment: Alignment.centerRight,
                               padding: const EdgeInsets.only(right: 24),
                               decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.errorContainer,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .errorContainer,
                                 borderRadius: BorderRadius.circular(24),
                               ),
                               child: Icon(
                                 Icons.delete_outline,
-                                color: Theme.of(context).colorScheme.onErrorContainer,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onErrorContainer,
                               ),
                             ),
                             confirmDismiss: (_) async {
                               return await showDialog<bool>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('Beleg löschen?'),
-                                  content: const Text(
-                                    'Möchtest du diesen Beleg und das '
-                                    'zugehörige Bild wirklich löschen?',
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.pop(ctx, false),
-                                      child: const Text('Abbrechen'),
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      title: const Text('Beleg löschen?'),
+                                      content: const Text(
+                                        'Möchtest du diesen Beleg und das '
+                                        'zugehörige Bild wirklich löschen?',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, false),
+                                          child: const Text('Abbrechen'),
+                                        ),
+                                        FilledButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, true),
+                                          child: const Text('Löschen'),
+                                        ),
+                                      ],
                                     ),
-                                    FilledButton(
-                                      onPressed: () =>
-                                          Navigator.pop(ctx, true),
-                                      child: const Text('Löschen'),
-                                    ),
-                                  ],
-                                ),
-                              ) ??
+                                  ) ??
                                   false;
                             },
                             onDismissed: (_) => _deleteReceipt(receipt),
@@ -710,7 +529,7 @@ class _HomePageState extends State<HomePage> {
                         },
                       ),
 
-                // FAB-Menü-Hintergrund: schließt das Menü beim Antippen
+                // FAB-Menü-Hintergrund
                 if (_isFabExpanded)
                   Positioned.fill(
                     child: GestureDetector(
@@ -722,7 +541,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
 
-                // Scan/Import-Overlay: Glassmorphism-Effekt mit Unschärfe
+                // Scan/Import-Overlay
                 if (_isScanning)
                   BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
@@ -767,16 +586,18 @@ class _HomePageState extends State<HomePage> {
                     Icon(
                       Icons.receipt_long_outlined,
                       size: 40,
-                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      color:
+                          Theme.of(context).colorScheme.onPrimaryContainer,
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'Bong-Scanner',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onPrimaryContainer,
-                          ),
+                      style:
+                          Theme.of(context).textTheme.titleLarge?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onPrimaryContainer,
+                              ),
                     ),
                   ],
                 ),
@@ -803,15 +624,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Baut den Speed-Dial FloatingActionButton.
-  ///
-  /// Zeigt zwei Mini-FABs (Kamera + Galerie), die sich animiert ein-/ausblenden.
   Widget _buildFab(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // Galerie-Option
         AnimatedSlide(
           offset: _isFabExpanded ? Offset.zero : const Offset(0, 0.5),
           duration: const Duration(milliseconds: 200),
@@ -848,7 +665,6 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         ),
-        // Haupt-FAB
         FloatingActionButton(
           heroTag: 'mainFab',
           onPressed: _isScanning
@@ -865,7 +681,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Zeigt einen Hinweis, wenn keine Belege vorhanden sind.
   Widget _buildEmptyState() {
     return Center(
       child: Padding(
@@ -899,7 +714,6 @@ class _HomePageState extends State<HomePage> {
 // FAB-Menü-Element Widget
 // =============================================================================
 
-/// Ein Element im Speed-Dial FAB-Menü mit Label und Mini-FAB.
 class _FabMenuItem extends StatelessWidget {
   const _FabMenuItem({
     required this.icon,
@@ -922,10 +736,7 @@ class _FabMenuItem extends StatelessWidget {
           color: Theme.of(context).colorScheme.surfaceContainerHigh,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
+            child: Text(label, style: Theme.of(context).textTheme.labelLarge),
           ),
         ),
         const SizedBox(width: 12),
@@ -943,12 +754,6 @@ class _FabMenuItem extends StatelessWidget {
 // Filter-Bar Widget
 // =============================================================================
 
-/// Filter-Leiste mit interaktiven Datums-Auswahlbuttons.
-///
-/// Die Buttons öffnen jeweils einen [showDatePicker], mit dem ein beliebiges
-/// Datum ausgewählt werden kann. „Tag" filtert auf exakten Tag/Monat/Jahr,
-/// „Monat" auf Monat/Jahr, „Jahr" nur auf das Jahr. Ein „Alle anzeigen"-
-/// Button setzt alle aktiven Filter zurück.
 class _FilterBar extends StatelessWidget {
   const _FilterBar({
     required this.hasReceipts,
@@ -974,8 +779,6 @@ class _FilterBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasFilter =
         selectedDay != null || selectedMonth != null || selectedYear != null;
-
-    // Filter-Leiste ausblenden, wenn keine Belege vorhanden und kein Filter aktiv
     if (!hasReceipts && !hasFilter) return const SizedBox.shrink();
 
     return Column(
@@ -986,7 +789,6 @@ class _FilterBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
             children: [
-              // Tag-Button
               _buildDateChip(
                 context: context,
                 label: selectedDay != null
@@ -998,7 +800,6 @@ class _FilterBar extends StatelessWidget {
                 onTap: onPickDay,
               ),
               const SizedBox(width: 8),
-              // Monat-Button
               _buildDateChip(
                 context: context,
                 label: selectedMonth != null && selectedDay == null
@@ -1008,18 +809,18 @@ class _FilterBar extends StatelessWidget {
                 onTap: onPickMonth,
               ),
               const SizedBox(width: 8),
-              // Jahr-Button
               _buildDateChip(
                 context: context,
-                label:
-                    selectedYear != null && selectedMonth == null && selectedDay == null
-                        ? 'Jahr: $selectedYear'
-                        : 'Jahr',
-                isSelected:
-                    selectedYear != null && selectedMonth == null && selectedDay == null,
+                label: selectedYear != null &&
+                        selectedMonth == null &&
+                        selectedDay == null
+                    ? 'Jahr: $selectedYear'
+                    : 'Jahr',
+                isSelected: selectedYear != null &&
+                    selectedMonth == null &&
+                    selectedDay == null,
                 onTap: onPickYear,
               ),
-              // „Alle anzeigen"-Button (nur wenn Filter aktiv)
               if (hasFilter) ...[
                 const SizedBox(width: 12),
                 ActionChip(
@@ -1052,7 +853,6 @@ class _FilterBar extends StatelessWidget {
     );
   }
 
-  /// Gibt den deutschen Monatsnamen für einen Monatswert (1–12) zurück.
   String _monthName(int month) {
     const names = [
       'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
@@ -1066,7 +866,6 @@ class _FilterBar extends StatelessWidget {
 // Beleg-ListTile Widget
 // =============================================================================
 
-/// Listeneintrags-Widget für einen Beleg.
 class _ReceiptListTile extends StatelessWidget {
   const _ReceiptListTile({
     required this.receipt,
@@ -1095,7 +894,6 @@ class _ReceiptListTile extends StatelessWidget {
             const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: _buildThumbnail(context),
         title: Text(
-          // Betrag fett hervorheben
           currencyFormat.format(receipt.totalAmount),
           style: Theme.of(context)
               .textTheme
@@ -1112,19 +910,14 @@ class _ReceiptListTile extends StatelessWidget {
     );
   }
 
-  /// Baut das Thumbnail-Widget links im ListTile.
-  ///
-  /// Zeigt das echte Belegbild (falls vorhanden) oder einen Platzhalter.
-  /// Ein Tipp auf das Thumbnail öffnet die Vollbild-Ansicht mit Zoom.
   Widget _buildThumbnail(BuildContext context) {
     final path = receipt.imagePath;
-
     if (path != null) {
       return GestureDetector(
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute<void>(
-            builder: (_) => _FullscreenImageViewer(imagePath: path),
+            builder: (_) => FullscreenImageViewer(imagePath: path),
           ),
         ),
         child: ClipRRect(
@@ -1142,7 +935,6 @@ class _ReceiptListTile extends StatelessWidget {
     return _placeholder(context);
   }
 
-  /// Grauer Platzhalter mit Beleg-Icon für Belege ohne Bild.
   Widget _placeholder(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -1154,865 +946,6 @@ class _ReceiptListTile extends StatelessWidget {
         child: Icon(
           Icons.receipt_outlined,
           color: Theme.of(context).colorScheme.onPrimaryContainer,
-        ),
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Beleg-Detail BottomSheet Widget
-// =============================================================================
-
-/// Detail-Ansicht eines Belegs als BottomSheet mit editierbaren Positionen.
-class _ReceiptDetailSheet extends StatefulWidget {
-  const _ReceiptDetailSheet({
-    required this.receipt,
-    required this.dateFormat,
-    required this.currencyFormat,
-    required this.databaseService,
-    required this.onSaved,
-    this.onShare,
-    this.onSaveToGallery,
-  });
-
-  final Receipt receipt;
-  final DateFormat dateFormat;
-  final NumberFormat currencyFormat;
-  final DatabaseService databaseService;
-  final ValueChanged<Receipt> onSaved;
-  final ValueChanged<Receipt>? onShare;
-  final ValueChanged<Receipt>? onSaveToGallery;
-
-  @override
-  State<_ReceiptDetailSheet> createState() => _ReceiptDetailSheetState();
-}
-
-class _ReceiptDetailSheetState extends State<_ReceiptDetailSheet> {
-  late List<TextEditingController> _nameControllers;
-  late List<TextEditingController> _priceControllers;
-
-  /// Kategorien der Einzelposten (parallele Liste zu den Controllern).
-  late List<String> _categories;
-
-  bool _isSaving = false;
-
-  /// Gibt an, ob die Detailansicht im Bearbeitungs-Modus ist.
-  ///
-  /// `false` (Standard): Positionen werden als saubere Text-Labels angezeigt.
-  /// `true`: Positionen werden als editierbare TextFields mit Lösch-Icons angezeigt.
-  bool _isEditing = false;
-
-  /// Lokale Kopie des Gesamtbetrags, der im Edit-Modus durch die
-  /// „Summe aus Artikeln berechnen"-Funktion überschrieben werden kann.
-  late double _editedTotalAmount;
-
-  /// Formatiert Preise im deutschen Dezimalformat (z. B. "1,95") für die
-  /// Eingabefelder – getrennt vom [widget.currencyFormat], das das €-Symbol
-  /// enthält und für die Anzeige genutzt wird.
-  final NumberFormat _deDecimalFormat = NumberFormat('#0.00', 'de_DE');
-
-  // ---------------------------------------------------------------------------
-  // Easter-Egg: 5-faches schnelles Antippen des Belegbilds öffnet den
-  // Raw-OCR-Debug-Modus.
-  // ---------------------------------------------------------------------------
-
-  /// Zeitstempel der letzten Taps auf das Belegbild.
-  final List<DateTime> _imageTapTimestamps = [];
-
-  /// Maximales Zeitfenster (in Sekunden), in dem 5 Taps registriert werden
-  /// müssen, um den Debug-Modus auszulösen.
-  static const _debugTapWindow = Duration(seconds: 3);
-
-  /// Anzahl der erforderlichen Taps für den Debug-Trigger.
-  static const _debugTapCount = 5;
-
-  @override
-  void initState() {
-    super.initState();
-    _editedTotalAmount = widget.receipt.totalAmount;
-    _initControllers(widget.receipt.items);
-  }
-
-  /// Initialisiert je einen Name- und Preis-Controller pro Artikel.
-  ///
-  /// Hängt an jeden Preis-Controller einen Listener, damit die Abweichungs-
-  /// Warnung sofort aktualisiert wird, wenn der Nutzer Preise eintippt.
-  void _initControllers(List<String> items) {
-    _nameControllers = [];
-    _priceControllers = [];
-    _categories = [];
-    for (var i = 0; i < items.length; i++) {
-      final (:name, :price) = parseLineItem(items[i]);
-      _nameControllers.add(TextEditingController(text: name));
-      final priceCtrl = TextEditingController(
-        text: price != null ? _deDecimalFormat.format(price) : '',
-      );
-      priceCtrl.addListener(_onPriceChanged);
-      _priceControllers.add(priceCtrl);
-      _categories.add(widget.receipt.categoryAt(i));
-    }
-  }
-
-  /// Wird bei jeder Änderung eines Preis-Felds aufgerufen und löst ein
-  /// Neu-Rendern aus, damit die Abweichungs-Farbe live aktualisiert wird.
-  void _onPriceChanged() {
-    if (_isEditing && mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    for (final c in _nameControllers) c.dispose();
-    for (final c in _priceControllers) c.dispose();
-    super.dispose();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Summen-Logik
-  // ---------------------------------------------------------------------------
-
-  /// Summiert die eingetragenen Preise aller Positionen.
-  ///
-  /// Akzeptiert sowohl Komma als auch Punkt als Dezimaltrenner.
-  /// Das Ergebnis wird auf 2 Nachkommastellen gerundet.
-  double _computeItemsTotal() {
-    double total = 0.0;
-    for (final c in _priceControllers) {
-      final val = double.tryParse(c.text.trim().replaceAll(',', '.'));
-      if (val != null) total += val;
-    }
-    return (total * 100).round() / 100.0;
-  }
-
-  /// Fügt eine neue leere Position am Ende der Liste hinzu.
-  void _addItem() {
-    final priceCtrl = TextEditingController();
-    priceCtrl.addListener(_onPriceChanged);
-    setState(() {
-      _nameControllers.add(TextEditingController());
-      _priceControllers.add(priceCtrl);
-      _categories.add('Sonstiges');
-    });
-  }
-
-  /// Überschreibt den Gesamtbetrag mit der berechneten Summe der Artikel.
-  void _syncTotalFromItems() {
-    setState(() => _editedTotalAmount = _computeItemsTotal());
-  }
-
-  /// Entfernt einen Artikel anhand seines Index aus der Liste.
-  void _deleteItem(int index) {
-    _nameControllers[index].dispose();
-    _priceControllers[index].dispose();
-    setState(() {
-      _nameControllers.removeAt(index);
-      _priceControllers.removeAt(index);
-      if (index < _categories.length) _categories.removeAt(index);
-    });
-  }
-
-  /// Speichert die geänderten Positionen in der Datenbank.
-  ///
-  /// Jeder Artikel wird als "<Name>  <Preis>" gespeichert – das doppelte
-  /// Leerzeichen dient als Trenner, da [parseLineItem] `\s+` vor dem Preis
-  /// am Zeilenende erkennt und die Rekonstruktion damit zuverlässig gelingt.
-  Future<void> _saveChanges() async {
-    setState(() => _isSaving = true);
-    try {
-      final newItems = <String>[];
-      final newCategories = <String>[];
-      for (var i = 0; i < _nameControllers.length; i++) {
-        final name = _nameControllers[i].text.trim();
-        if (name.isEmpty) continue;
-        final priceText = _priceControllers[i].text.trim();
-        newItems.add(priceText.isNotEmpty ? '$name  $priceText' : name);
-        newCategories.add(
-          i < _categories.length ? _categories[i] : 'Sonstiges',
-        );
-      }
-
-      final updatedReceipt = widget.receipt.copyWith(
-        items: newItems,
-        categories: newCategories,
-        totalAmount: _editedTotalAmount,
-      );
-      await widget.databaseService.insertReceipt(updatedReceipt);
-
-      if (mounted) {
-        widget.onSaved(updatedReceipt);
-        setState(() => _isEditing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Änderungen gespeichert.')),
-        );
-      }
-    } catch (e, st) {
-      debugPrint('[_ReceiptDetailSheet] Save failed: $e\n$st');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Speichern fehlgeschlagen. Bitte erneut versuchen.',
-            ),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Build
-  // ---------------------------------------------------------------------------
-
-  @override
-  Widget build(BuildContext context) {
-    // Pre-compute once per build so all widgets share the same values.
-    final itemsTotal = _computeItemsTotal();
-    final mismatch = _isEditing &&
-        itemsTotal > 0.005 &&
-        (itemsTotal - _editedTotalAmount).abs() > 0.005;
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.6,
-      maxChildSize: 0.95,
-      minChildSize: 0.4,
-      expand: false,
-      builder: (_, scrollController) {
-        final hasImage = widget.receipt.imagePath != null;
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ------------------------------------------------------------------
-            // Fixer Kopfbereich (nicht gescrollt)
-            // ------------------------------------------------------------------
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Drag-Handle
-                  Center(
-                    child: Container(
-                      width: 48,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 20),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-
-                  // Betrag, Datum und Edit/Save-Icon
-                  Row(
-                    children: [
-                      // Gesamtbetrag – orange wenn Abweichung im Edit-Modus
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Text(
-                              widget.currencyFormat.format(_editedTotalAmount),
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .headlineMedium
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: mismatch
-                                        ? Colors.orange[700]
-                                        : null,
-                                  ),
-                            ),
-                            // Warn-Icon bei Abweichung
-                            if (mismatch) ...[
-                              const SizedBox(width: 4),
-                              Tooltip(
-                                message:
-                                    'Summe der Artikel '
-                                    '(${widget.currencyFormat.format(itemsTotal)}) '
-                                    'weicht ab',
-                                child: Icon(
-                                  Icons.warning_amber_outlined,
-                                  color: Colors.orange[700],
-                                  size: 18,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      Text(
-                        widget.dateFormat.format(widget.receipt.date),
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(width: 8),
-                      // Teilen-Icon (nur wenn Belegbild vorhanden)
-                      if (hasImage)
-                        IconButton(
-                          icon: const Icon(Icons.share_outlined),
-                          tooltip: 'Belegbild teilen',
-                          onPressed: _shareImage,
-                        ),
-                      // Bearbeiten / Speichern-Icon
-                      _isEditing
-                          ? IconButton(
-                              icon: _isSaving
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
-                                    )
-                                  : const Icon(Icons.check),
-                              tooltip: 'Änderungen speichern',
-                              onPressed: _isSaving ? null : _saveChanges,
-                            )
-                          : IconButton(
-                              icon: const Icon(Icons.edit_outlined),
-                              tooltip: 'Bearbeiten',
-                              onPressed: () =>
-                                  setState(() => _isEditing = true),
-                            ),
-                      // Drei-Punkte-Menü
-                      PopupMenuButton<String>(
-                        icon: const Icon(
-                          Icons.more_vert,
-                          semanticLabel: 'Weitere Optionen',
-                        ),
-                        tooltip: 'Weitere Optionen',
-                        onSelected: (value) {
-                          if (value == 'debug_raw_ocr') {
-                            _showRawOcrSheet();
-                          } else if (value == 'save_to_gallery') {
-                            _saveToGallery();
-                          }
-                        },
-                        itemBuilder: (_) => [
-                          if (hasImage)
-                            const PopupMenuItem(
-                              value: 'save_to_gallery',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.save_alt_outlined,
-                                    size: 18,
-                                    semanticLabel: '',
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text('In Galerie speichern'),
-                                ],
-                              ),
-                            ),
-                          const PopupMenuItem(
-                            value: 'debug_raw_ocr',
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.bug_report_outlined,
-                                  size: 18,
-                                  semanticLabel: '',
-                                ),
-                                SizedBox(width: 8),
-                                Text('DEBUG: Raw OCR'),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-
-                  const Divider(height: 24),
-
-                  // Belegbild (antippen → Vollbild)
-                  if (hasImage) ...[
-                    _buildImagePreview(context),
-                    const Divider(height: 24),
-                  ],
-
-                  // Abschnittstitel
-                  Text(
-                    'Erkannte Positionen',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  const SizedBox(height: 8),
-                ],
-              ),
-            ),
-
-            // ------------------------------------------------------------------
-            // Scrollbare Artikel-Liste
-            // ------------------------------------------------------------------
-            Expanded(
-              child: _nameControllers.isEmpty && !_isEditing
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          widget.receipt.totalAmount > 0
-                              ? 'Keine Einzelpreise erkannt.\n'
-                                  'Tippe auf Bearbeiten, um Artikel '
-                                  'manuell hinzuzufügen.'
-                              : 'Kein Text erkannt. Bitte Beleg '
-                                  'erneut scannen.',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodyMedium?.copyWith(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    )
-                  : ListView.separated(
-                      controller: scrollController,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      // +1 für den Edit-Footer (Hinzufügen + Sync-Button)
-                      itemCount:
-                          _nameControllers.length + (_isEditing ? 1 : 0),
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, index) {
-                        if (_isEditing && index == _nameControllers.length) {
-                          return _buildEditFooter(context);
-                        }
-                        return _isEditing
-                            ? _buildEditItemRow(context, index)
-                            : _buildViewItemRow(context, index);
-                      },
-                    ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Easter-Egg Logik
-  // ---------------------------------------------------------------------------
-
-  /// Wird bei jedem Tap auf das Belegbild aufgerufen.
-  ///
-  /// Prüft, ob innerhalb von [_debugTapWindow] bereits [_debugTapCount] Taps
-  /// erfolgt sind. Beim 5. Tap wird der Raw-OCR-Debug-Modus ausgelöst.
-  /// Beim ersten Tap innerhalb des Zeitfensters wird zusätzlich die
-  /// Standard-Vollbild-Ansicht geöffnet.
-  void _onImageTap() {
-    final now = DateTime.now();
-    _imageTapTimestamps.add(now);
-
-    // Taps außerhalb des Zeitfensters entfernen
-    _imageTapTimestamps.removeWhere(
-      (t) => now.difference(t) > _debugTapWindow,
-    );
-
-    debugPrint('Tap count: ${_imageTapTimestamps.length}');
-
-    if (_imageTapTimestamps.length >= _debugTapCount) {
-      _imageTapTimestamps.clear();
-      _triggerDebugMode();
-    } else if (_imageTapTimestamps.length == 1) {
-      // Erster Tap im Zeitfenster → normale Vollbild-Ansicht öffnen
-      Navigator.push(
-        context,
-        MaterialPageRoute<void>(
-          builder: (_) =>
-              _FullscreenImageViewer(imagePath: widget.receipt.imagePath!),
-        ),
-      );
-    }
-  }
-
-  /// Zeigt SnackBar-Feedback und öffnet das Raw-OCR-BottomSheet.
-  void _triggerDebugMode() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Entwicklermodus: Rohdaten werden geladen...'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-    _showRawOcrSheet();
-  }
-
-  /// Öffnet ein [showModalBottomSheet] mit dem vollständigen OCR-Rohtext.
-  void _showRawOcrSheet() {
-    final rawText = widget.receipt.rawText;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          maxChildSize: 0.95,
-          minChildSize: 0.4,
-          expand: false,
-          builder: (_, scrollController) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Drag-Handle
-                  Center(
-                    child: Container(
-                      width: 48,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          ctx,
-                        ).colorScheme.outlineVariant,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-
-                  // Titel-Zeile mit Käfer-Icon und Copy-Button
-                  Row(
-                    children: [
-                      const Icon(Icons.bug_report_outlined, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Raw OCR – Rohdaten',
-                          style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      if (rawText != null && rawText.isNotEmpty)
-                        IconButton(
-                          icon: const Icon(Icons.copy_outlined),
-                          tooltip: 'In Zwischenablage kopieren',
-                          onPressed: () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: rawText),
-                            );
-                            if (ctx.mounted) {
-                              ScaffoldMessenger.of(ctx).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Rohtext in Zwischenablage kopiert.',
-                                  ),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                    ],
-                  ),
-
-                  const Divider(height: 16),
-
-                  // Scrollbarer Rohtext in Monospace
-                  Expanded(
-                    child: rawText == null || rawText.isEmpty
-                        ? Center(
-                            child: Text(
-                              'Kein Rohtext vorhanden.\n'
-                              '(Beleg wurde vor dem Update gescannt.)',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(ctx).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      ctx,
-                                    ).colorScheme.onSurfaceVariant,
-                                  ),
-                            ),
-                          )
-                        : SingleChildScrollView(
-                            controller: scrollController,
-                            child: SelectableText(
-                              rawText,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 12,
-                                height: 1.5,
-                              ),
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  /// Belegbild-Vorschau: Tipp öffnet die Vollbild-Ansicht.
-  /// 5 schnelle Taps innerhalb von 3 Sekunden aktivieren den Raw-OCR-Debug-Modus.
-  Widget _buildImagePreview(BuildContext context) {
-    final path = widget.receipt.imagePath!;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: _onImageTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          alignment: Alignment.bottomRight,
-          children: [
-            Image.file(
-              File(path),
-              height: 160,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-            ),
-            // Kleines Zoom-Hinweis-Icon
-            Container(
-              margin: const EdgeInsets.all(8),
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.zoom_in_outlined,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Schreibgeschützte Zeile für einen Artikel (Name + Kategorie-Label + Preis).
-  Widget _buildViewItemRow(BuildContext context, int index) {
-    final name = _nameControllers[index].text;
-    final priceText = _priceControllers[index].text.trim();
-    final category =
-        index < _categories.length ? _categories[index] : 'Sonstiges';
-    final showChip = category != 'Sonstiges';
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 6,
-        children: [
-          Text(name),
-          if (showChip)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: _categoryColor(category),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                category,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: _categoryTextColor(category),
-                    ),
-              ),
-            ),
-        ],
-      ),
-      trailing: priceText.isNotEmpty
-          ? Text(
-              '$priceText €',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-            )
-          : null,
-    );
-  }
-
-  /// Hintergrundfarbe für ein Kategorie-Label.
-  Color _categoryColor(String category) {
-    switch (category) {
-      case 'Lebensmittel':
-        return Colors.green.shade100;
-      case 'Drogerie':
-        return Colors.blue.shade100;
-      case 'Getränke':
-        return Colors.orange.shade100;
-      case 'Pfand':
-        return Colors.purple.shade100;
-      default:
-        return Colors.grey.shade200;
-    }
-  }
-
-  /// Textfarbe für ein Kategorie-Label (passend zum Hintergrund).
-  Color _categoryTextColor(String category) {
-    switch (category) {
-      case 'Lebensmittel':
-        return Colors.green.shade800;
-      case 'Drogerie':
-        return Colors.blue.shade800;
-      case 'Getränke':
-        return Colors.orange.shade800;
-      case 'Pfand':
-        return Colors.purple.shade800;
-      default:
-        return Colors.grey.shade700;
-    }
-  }
-
-  /// Editierbare Zeile für einen Artikel (Name + Preis + Löschen-Button + Kategorie).
-  Widget _buildEditItemRow(BuildContext context, int index) {
-    final category =
-        index < _categories.length ? _categories[index] : 'Sonstiges';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Artikelname
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  controller: _nameControllers[index],
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                    labelText: 'Artikel',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Preis
-              SizedBox(
-                width: 90,
-                child: TextField(
-                  controller: _priceControllers[index],
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Preis',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    suffixText: '€',
-                  ),
-                ),
-              ),
-              // Löschen-Button
-              IconButton(
-                icon: const Icon(Icons.delete_outline),
-                tooltip: 'Position entfernen',
-                color: Theme.of(context).colorScheme.error,
-                onPressed: () => _deleteItem(index),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          // Kategorie-Auswahl
-          Row(
-            children: [
-              Icon(
-                Icons.label_outline,
-                size: 16,
-                color: Theme.of(context).colorScheme.secondary,
-              ),
-              const SizedBox(width: 4),
-              DropdownButton<String>(
-                value: category,
-                isDense: true,
-                underline: const SizedBox.shrink(),
-                style: Theme.of(context).textTheme.bodySmall,
-                items: const [
-                  'Lebensmittel',
-                  'Drogerie',
-                  'Pfand',
-                  'Getränke',
-                  'Freizeit',
-                  'Transport',
-                  'Sonstiges',
-                ]
-                    .map(
-                      (c) => DropdownMenuItem(value: c, child: Text(c)),
-                    )
-                    .toList(),
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() {
-                      while (_categories.length <= index) {
-                        _categories.add('Sonstiges');
-                      }
-                      _categories[index] = val;
-                    });
-                  }
-                },
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Footer der editierbaren Liste mit „+ Position hinzufügen" und
-  /// „Summe aus Artikeln berechnen"-Buttons.
-  Widget _buildEditFooter(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          OutlinedButton.icon(
-            icon: const Icon(Icons.add),
-            label: const Text('Position hinzufügen'),
-            onPressed: _addItem,
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.calculate_outlined),
-            label: const Text('Summe aus Artikeln berechnen'),
-            onPressed: _syncTotalFromItems,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Vollbild-Bildanzeige mit Zoom
-// =============================================================================
-
-/// Vollbild-Ansicht eines Belegbilds mit Pinch-to-Zoom via [InteractiveViewer].
-class _FullscreenImageViewer extends StatelessWidget {
-  const _FullscreenImageViewer({required this.imagePath});
-
-  final String imagePath;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: const Text('Belegbild'),
-      ),
-      body: Center(
-        child: InteractiveViewer(
-          minScale: 0.5,
-          maxScale: 6.0,
-          child: Image.file(
-            File(imagePath),
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const Center(
-              child: Icon(Icons.broken_image_outlined,
-                  color: Colors.white54, size: 64),
-            ),
-          ),
         ),
       ),
     );

@@ -134,6 +134,9 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
       _nameControllers.add(TextEditingController());
       _priceControllers.add(priceCtrl);
       _categories.add('Sonstiges');
+      // Newly added items have no original name → no mapping will be learned.
+      _originalNames.add('');
+      _originalCategories.add('');
     });
   }
 
@@ -148,6 +151,10 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
       _nameControllers.removeAt(index);
       _priceControllers.removeAt(index);
       if (index < _categories.length) _categories.removeAt(index);
+      if (index < _originalNames.length) _originalNames.removeAt(index);
+      if (index < _originalCategories.length) {
+        _originalCategories.removeAt(index);
+      }
     });
   }
 

@@ -176,10 +176,11 @@ class ProcessorService {
       await _updateProgress(receipt, 0.50);
       final permanentPath = await _persistImage(tempPath);
 
-      // ── Schritt 6: Kategorien laden + Parsing (75 %) ─────────────────────
+      // ── Schritt 6: Kategorien + Mappings laden + Parsing (75 %) ──────────
       await _updateProgress(receipt, 0.75);
 
       List<Map<String, dynamic>> categoryData = [];
+      List<Map<String, dynamic>> productMappings = [];
       try {
         final cats = await _databaseService.getCategories();
         categoryData = cats.map((c) => c.toMap()).toList();
@@ -187,11 +188,36 @@ class ProcessorService {
         debugPrint(
             '[ProcessorService] Kategorien konnten nicht geladen werden: $e');
       }
+      try {
+        productMappings = await _databaseService.getProductMappings();
+      } catch (e) {
+        debugPrint(
+            '[ProcessorService] Produkt-Mappings konnten nicht geladen werden: $e');
+      }
+
+      // Räumliche Zeilendaten aus ML-Kit-Ergebnis extrahieren.
+      final spatialLines = <Map<String, dynamic>>[];
+      for (final block in recognizedText.blocks) {
+        for (final line in block.lines) {
+          final rect = line.boundingBox;
+          spatialLines.add({
+            'text': line.text,
+            'top': rect.top.toDouble(),
+            'bottom': rect.bottom.toDouble(),
+            'left': rect.left.toDouble(),
+            'right': rect.right.toDouble(),
+            'centerY': ((rect.top + rect.bottom) / 2.0),
+            'centerX': ((rect.left + rect.right) / 2.0),
+          });
+        }
+      }
 
       // Text-Parsing in einem Background-Isolate
       final result = await compute(parseOcrText, {
         'text': fullText,
         'categoryData': categoryData,
+        'productMappings': productMappings,
+        'spatialLines': spatialLines,
       });
 
       // ── Schritt 7: Abgeschlossenen Beleg speichern ───────────────────────

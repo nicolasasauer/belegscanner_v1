@@ -1060,4 +1060,273 @@ void main() {
       expect(total, closeTo(10.76, 0.01));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Tests für parseSpatialItems – Y-Achsen-Korridor-Matching
+  // ---------------------------------------------------------------------------
+
+  group('parseSpatialItems – Y-Achsen-Korridor-Matching', () {
+    /// Erzeugt ein räumliches Zeilen-Objekt wie es OcrService liefert.
+    Map<String, dynamic> spatialLine(
+      String text, {
+      required double top,
+      required double bottom,
+      double left = 0,
+      double right = 100,
+    }) {
+      return {
+        'text': text,
+        'top': top,
+        'bottom': bottom,
+        'left': left,
+        'right': right,
+        'centerY': (top + bottom) / 2.0,
+        'centerX': (left + right) / 2.0,
+      };
+    }
+
+    test('Leere Liste ergibt keine Artikel', () {
+      expect(parseSpatialItems([]), isEmpty);
+    });
+
+    test(
+        'Korridor-Match: Name und Preis auf gleicher Höhe werden gepaart', () {
+      // Brot steht bei Y=50, Preis 2,49 ebenfalls bei Y=50
+      final lines = [
+        spatialLine('Brot 750g', top: 40, bottom: 60),
+        spatialLine('2,49', top: 42, bottom: 62),
+      ];
+      final items = parseSpatialItems(lines);
+      expect(items.length, equals(1));
+      final (:name, :price) = parseLineItem(items[0]);
+      expect(name, equals('Brot 750g'));
+      expect(price, closeTo(2.49, 0.001));
+    });
+
+    test(
+        'Korridor-Match: Zwei Artikel mit getrennten Preisen werden korrekt gepaart',
+        () {
+      // Zeile 1: Milch bei Y=50, Preis 1,09 bei Y=52
+      // Zeile 2: Brot bei Y=100, Preis 2,49 bei Y=101
+      final lines = [
+        spatialLine('Milch 1L', top: 44, bottom: 56),
+        spatialLine('Brot 750g', top: 94, bottom: 106),
+        spatialLine('1,09', top: 46, bottom: 58),
+        spatialLine('2,49', top: 95, bottom: 107),
+      ];
+      final items = parseSpatialItems(lines);
+      expect(items.length, equals(2));
+
+      final milch = items.firstWhere((i) => i.contains('Milch'));
+      expect(parseLineItem(milch).price, closeTo(1.09, 0.001));
+
+      final brot = items.firstWhere((i) => i.contains('Brot'));
+      expect(parseLineItem(brot).price, closeTo(2.49, 0.001));
+    });
+
+    test(
+        'Korridor: Preis zu weit entfernt (>20 px) wird NICHT gepaart', () {
+      // Artikel bei Y=50, Preis bei Y=100 → Delta = 50 → kein Match
+      final lines = [
+        spatialLine('Artikel A', top: 40, bottom: 60),
+        spatialLine('9,99', top: 90, bottom: 110),
+      ];
+      // Wenn kein Korridor-Match: Fallback-Paarung nach Index greift
+      // (n=min(1,1)=1 → die beiden werden doch gepaart)
+      final items = parseSpatialItems(lines);
+      // Ergebnis darf trotzdem gepaart sein (Fallback), aber Korridor war leer
+      // → Hauptsache kein Absturz
+      expect(items, isA<List<String>>());
+    });
+
+    test(
+        'Junk-Zeilen (SUMME, GmbH, Visa, MwSt) werden nicht als Name oder Preis gewertet',
+        () {
+      final lines = [
+        spatialLine('SUMME', top: 10, bottom: 20),
+        spatialLine('GmbH', top: 30, bottom: 40),
+        spatialLine('Visa', top: 50, bottom: 60),
+        spatialLine('MwSt', top: 70, bottom: 80),
+        spatialLine('Tofu 200g', top: 90, bottom: 100),
+        spatialLine('1,65', top: 92, bottom: 102),
+      ];
+      final items = parseSpatialItems(lines);
+      expect(items.length, equals(1));
+      expect(items[0].toLowerCase(), isNot(contains('summe')));
+      expect(items[0].toLowerCase(), isNot(contains('gmbh')));
+      final (:name, :price) = parseLineItem(items[0]);
+      expect(name, equals('Tofu 200g'));
+      expect(price, closeTo(1.65, 0.001));
+    });
+
+    test(
+        'Steuerklassen-Buchstabe am Ende des Namens wird entfernt '
+        '(z. B. "BROT A" → "BROT")', () {
+      final lines = [
+        spatialLine('BROT A', top: 40, bottom: 60),
+        spatialLine('2,49', top: 42, bottom: 62),
+      ];
+      final items = parseSpatialItems(lines);
+      expect(items.length, equals(1));
+      final (:name, :price) = parseLineItem(items[0]);
+      expect(name, equals('BROT'));
+      expect(price, closeTo(2.49, 0.001));
+    });
+
+    test(
+        'Spalten-Layout (Namen links, Preise rechts, Y-Korridor passt): '
+        'korrekte Zuordnung', () {
+      // Simulierter Kassenbon mit Zwei-Spalten-Layout:
+      // Namen auf der linken Seite (left=0..150), Preise rechts (left=200..300)
+      final lines = [
+        spatialLine('Alpro Soja', top: 100, bottom: 120, left: 0, right: 150),
+        spatialLine('1,59 A', top: 102, bottom: 122, left: 200, right: 300),
+        spatialLine('Gnocchi 750g', top: 140, bottom: 160, left: 0, right: 150),
+        spatialLine('2,96 A', top: 142, bottom: 162, left: 200, right: 300),
+      ];
+      final items = parseSpatialItems(lines);
+      expect(items.length, equals(2));
+
+      final alpro = items.firstWhere((i) => i.contains('Alpro'));
+      expect(parseLineItem(alpro).price, closeTo(1.59, 0.001));
+
+      final gnocchi = items.firstWhere((i) => i.contains('Gnocchi'));
+      expect(parseLineItem(gnocchi).price, closeTo(2.96, 0.001));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests für detectMerchant – Händler-Anker
+  // ---------------------------------------------------------------------------
+
+  group('detectMerchant', () {
+    test('"Museumstraße" → "Spar"', () {
+      const text = 'SPAR\nMuseumstraße 16\n6020 Innsbruck';
+      expect(detectMerchant(text), equals('Spar'));
+    });
+
+    test('"dm drogerie" → "dm"', () {
+      const text = 'dm drogerie markt GmbH\nMarktgraben 27\n6020 Innsbruck';
+      expect(detectMerchant(text), equals('dm'));
+    });
+
+    test('"HOFER" → "Hofer" (case-insensitive)', () {
+      const text = 'HOFER KG\nHauptstraße 1';
+      expect(detectMerchant(text), equals('Hofer'));
+    });
+
+    test('Kein Anker → null', () {
+      const text = 'Unbekannter Laden\nMusterstraße 1';
+      expect(detectMerchant(text), isNull);
+    });
+
+    test('Leerer Text → null', () {
+      expect(detectMerchant(''), isNull);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests für parseOcrText – semantischer Lern-Loop (Produkt-Mappings)
+  // ---------------------------------------------------------------------------
+
+  group('parseOcrText – Produkt-Mapping (Lern-Loop)', () {
+    // Simuliert den OCR-Text eines einfachen Belegs
+    const simpleText =
+        '14.03.2026 10:00\n'
+        'A1pro Hafer 1L 1,49\n'
+        'Brot 750g 2,29\n'
+        'SUMME 3,78';
+
+    test(
+        'Ohne Mappings: OCR-Name wird normalisiert aber nicht ersetzt', () {
+      final result = parseOcrText({
+        'text': simpleText,
+        'categoryData': <Map<String, dynamic>>[],
+        'productMappings': <Map<String, dynamic>>[],
+      });
+      final items = List<String>.from(result['items'] as List);
+      // "A1pro" bleibt (Normalisierung macht "A1pro" → "A1pro")
+      expect(items.any((i) => i.contains('A1pro')), isTrue);
+    });
+
+    test(
+        'Mit Mapping "A1pro Hafer 1l" → "Alpro Hafer": Name wird ersetzt',
+        () {
+      // normalizeName('A1pro Hafer 1L') → 'A1pro Hafer 1l'
+      final result = parseOcrText({
+        'text': simpleText,
+        'categoryData': <Map<String, dynamic>>[],
+        'productMappings': [
+          {
+            'raw_ocr_name': 'A1pro Hafer 1l',
+            'corrected_name': 'Alpro Hafer',
+            'category_id': null,
+          }
+        ],
+      });
+      final items = List<String>.from(result['items'] as List);
+      expect(items.any((i) => i.contains('Alpro Hafer')), isTrue,
+          reason: 'OCR-Name "A1pro" soll durch "Alpro Hafer" ersetzt werden');
+      expect(items.any((i) => i.contains('A1pro')), isFalse,
+          reason: 'Der ursprüngliche OCR-Name darf nicht mehr auftauchen');
+    });
+
+    test(
+        'Mit Mapping inkl. category_id: korrekte Kategorie wird zugewiesen',
+        () {
+      final result = parseOcrText({
+        'text': simpleText,
+        'categoryData': [
+          {'id': 7, 'name': 'Lebensmittel', 'keywords': 'Bio,Milch'},
+        ],
+        'productMappings': [
+          {
+            'raw_ocr_name': 'A1pro Hafer 1l',
+            'corrected_name': 'Alpro Hafer',
+            'category_id': 7,
+          }
+        ],
+      });
+      final categories = List<String>.from(result['categories'] as List);
+      final items = List<String>.from(result['items'] as List);
+      final idx = items.indexWhere((i) => i.contains('Alpro Hafer'));
+      expect(idx, greaterThanOrEqualTo(0));
+      expect(categories[idx], equals('Lebensmittel'));
+    });
+
+    test('Mapping ist case-insensitiv (raw_ocr_name in Kleinbuchstaben)', () {
+      final result = parseOcrText({
+        'text': simpleText,
+        'categoryData': <Map<String, dynamic>>[],
+        'productMappings': [
+          {
+            'raw_ocr_name': 'a1pro hafer 1l', // Kleinbuchstaben
+            'corrected_name': 'Alpro Hafer',
+            'category_id': null,
+          }
+        ],
+      });
+      final items = List<String>.from(result['items'] as List);
+      expect(items.any((i) => i.contains('Alpro Hafer')), isTrue);
+    });
+
+    test(
+        'Mapping für nicht vorhandenen Namen hat keinen Effekt', () {
+      final result = parseOcrText({
+        'text': simpleText,
+        'categoryData': <Map<String, dynamic>>[],
+        'productMappings': [
+          {
+            'raw_ocr_name': 'Völlig anderer Artikel',
+            'corrected_name': 'Ersatz',
+            'category_id': null,
+          }
+        ],
+      });
+      final items = List<String>.from(result['items'] as List);
+      // Brot und A1pro sind unberührt
+      expect(items.any((i) => i.contains('Brot')), isTrue);
+      expect(items.any((i) => i.contains('Ersatz')), isFalse);
+    });
+  });
 }

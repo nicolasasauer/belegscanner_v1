@@ -744,6 +744,166 @@ List<String> parseItemsImpl(String text) {
   return result;
 }
 
+/// Bekannte Händler-Anker: Schlüsselwörter, die in der Bon-Kopfzeile
+/// einem bestimmten Händler zugeordnet sind.
+///
+/// Der Vergleich erfolgt case-insensitiv als Substring-Match.
+const Map<String, String> merchantAnchors = {
+  'Museumstraße': 'Spar',
+  'SPAR': 'Spar',
+  'dm drogerie': 'dm',
+  'Hofer': 'Hofer',
+  'BILLA': 'Billa',
+  'MERKUR': 'Merkur',
+  'PENNY': 'Penny',
+  'LIDL': 'Lidl',
+  'ALDI': 'Aldi',
+};
+
+/// Erkennt den Händlernamen anhand von [merchantAnchors] im OCR-Text [text].
+///
+/// Gibt `null` zurück, wenn kein Anker passt.
+String? detectMerchant(String text) {
+  final lower = text.toLowerCase();
+  for (final entry in merchantAnchors.entries) {
+    if (lower.contains(entry.key.toLowerCase())) {
+      return entry.value;
+    }
+  }
+  return null;
+}
+
+/// Maximale Y-Abstand (in Pixeln) zwischen dem vertikalen Mittelpunkt eines
+/// Artikelnamens und eines Preises, damit sie als "auf gleicher Zeile liegend"
+/// gelten.
+///
+/// **Begründung für 20 px:**
+/// Bei einem typischen Belegfoto (ca. 1080 × 1920 px) ist eine gedruckte Zeile
+/// auf dem physischen Bon etwa 8–12 Pixel hoch. OCR-Ungenauigkeiten und
+/// leichte Bildschiefstellungen verschieben den ermittelten `centerY`-Wert um
+/// ±3–8 Pixel. Ein Korridor von 20 Pixeln deckt zuverlässig dieselbe Zeile ab
+/// (Δ < 10 px typisch), ohne auf die nächste Bon-Zeile überzuspringen
+/// (Zeilenabstand > 20 px bei gängigen Kassenbons).
+///
+/// Hinweis: Bei sehr hochauflösenden Scans oder stark verzerrten Bildern kann
+/// ein größerer Wert sinnvoll sein. Eine künftige Konfigurationsmöglichkeit ist
+/// explizit vorgesehen.
+///
+/// Wird in [parseSpatialItems] für die Korridor-Zuordnung verwendet.
+const double kSpatialYCorridor = 20.0;
+
+/// Versucht, Artikelnamen und Preise anhand ihrer Bounding-Box-Koordinaten
+/// (Y-Achsen-Korridor) zuzuordnen.
+///
+/// Diese Funktion ist für den Einsatz in einem Background-Isolate konzipiert:
+/// Sie erwartet ausschließlich plain-Dart-Daten (keine UI-Objekte).
+///
+/// [spatialLines] ist eine Liste von Maps mit den Schlüsseln:
+///   - `'text'` (String): Textinhalt der Zeile
+///   - `'top'` (double): oberer Rand der Bounding Box in Pixeln
+///   - `'bottom'` (double): unterer Rand der Bounding Box in Pixeln
+///   - `'left'` (double): linker Rand
+///   - `'right'` (double): rechter Rand
+///   - `'centerY'` (double): vertikaler Mittelpunkt `(top + bottom) / 2`
+///   - `'centerX'` (double): horizontaler Mittelpunkt `(left + right) / 2`
+///
+/// Algorithmus (Zwei-Spalten-Modell):
+///   1. Alle Zeilen werden in Name-Kandidaten und Preis-Kandidaten aufgeteilt.
+///   2. Für jeden Artikel-Kandidaten wird ein passender Preis gesucht, dessen
+///      `centerY` maximal [kSpatialYCorridor] Pixel abweicht.
+///   3. Sind alle Preise auf der rechten Seite (rechte Spalte) und alle
+///      Namen auf der linken, wird zusätzlich eine spaltenbasierte Paarung
+///      nach Erscheinungsreihenfolge versucht.
+///
+/// Gibt eine leere Liste zurück, wenn keine sinnvollen Paare gefunden werden.
+@visibleForTesting
+List<String> parseSpatialItems(List<Map<String, dynamic>> spatialLines) {
+  if (spatialLines.isEmpty) return [];
+
+  final priceRegex = RegExp(r'^\d{1,4}[.,]\d{2}(?:\s+[A-Za-z0-9])?\s*$');
+  final nameRequiresLetterRegex = RegExp(r'[A-Za-zÄÖÜäöüß]');
+  final junkPattern = RegExp(
+    r'\bATU\b|\bEFSTA\b|\bGmbH\b|\bSUMME\b|\bTOTAL\b|\bGESAMT\b'
+    r'|\bZAHLBETRAG\b|\bPayback\b|\bMWSt\b|\bMwSt\b|\bUID-Nr\b'
+    r'|\bBuchung\b|\bContactless\b|\bVisa\b|\bMastercard\b',
+    caseSensitive: false,
+  );
+
+  // Trenne alle räumlichen Zeilen in Namen- und Preis-Kandidaten.
+  final nameCandidates = <Map<String, dynamic>>[];
+  final priceCandidates = <Map<String, dynamic>>[];
+
+  for (final line in spatialLines) {
+    final text = (line['text'] as String).trim();
+    if (text.isEmpty) continue;
+    if (junkPattern.hasMatch(text)) continue;
+    if (text.contains('%')) continue;
+    if (text.startsWith('-')) continue;
+    if (text.contains(':') && !priceRegex.hasMatch(text)) continue;
+
+    if (priceRegex.hasMatch(text)) {
+      priceCandidates.add(line);
+    } else if (nameRequiresLetterRegex.hasMatch(text)) {
+      nameCandidates.add(line);
+    }
+  }
+
+  if (nameCandidates.isEmpty || priceCandidates.isEmpty) return [];
+
+  // Korridor-Zuordnung: für jeden Namen den Preis mit geringstem Y-Abstand
+  // suchen (innerhalb des erlaubten Korridors).
+  final result = <String>[];
+  final usedPriceIndices = <int>{};
+
+  for (final nameEntry in nameCandidates) {
+    final nameCenterY = nameEntry['centerY'] as double;
+    int bestIdx = -1;
+    double bestDelta = double.infinity;
+
+    for (int j = 0; j < priceCandidates.length; j++) {
+      if (usedPriceIndices.contains(j)) continue;
+      final priceCenterY = priceCandidates[j]['centerY'] as double;
+      final delta = (nameCenterY - priceCenterY).abs();
+      if (delta < kSpatialYCorridor && delta < bestDelta) {
+        bestDelta = delta;
+        bestIdx = j;
+      }
+    }
+
+    if (bestIdx >= 0) {
+      usedPriceIndices.add(bestIdx);
+      final nameText = (nameEntry['text'] as String).trim();
+      final priceText = (priceCandidates[bestIdx]['text'] as String).trim();
+      // Steuerklassen-Buchstaben am Ende des Namens entfernen (z. B. "BROT A")
+      final cleanName = nameText.replaceAll(RegExp(r'\s+[A-Z]$'), '');
+      result.add('$cleanName  $priceText');
+      debugPrint(
+          '[Spatial-Match] Name="$cleanName" ↔ Preis="$priceText" '
+          '(ΔY=${bestDelta.toStringAsFixed(1)}px)');
+    }
+  }
+
+  // Spaltenbasierter Fallback: Wenn die Korridor-Zuordnung erfolgreich war,
+  // zurückgeben. Ansonsten versuchen, Namen und Preise nach Index zu paaren,
+  // falls sie geometrisch in zwei Spalten getrennt sind.
+  if (result.isNotEmpty) return result;
+
+  // Keine Korridor-Paare gefunden – spaltenbasierte Paarung nach Index.
+  final n = nameCandidates.length < priceCandidates.length
+      ? nameCandidates.length
+      : priceCandidates.length;
+  for (int i = 0; i < n; i++) {
+    final nameText =
+        (nameCandidates[i]['text'] as String).trim()
+            .replaceAll(RegExp(r'\s+[A-Z]$'), '');
+    final priceText = (priceCandidates[i]['text'] as String).trim();
+    result.add('$nameText  $priceText');
+    debugPrint('[Spatial-Fallback] Name="$nameText" ↔ Preis="$priceText"');
+  }
+
+  return result;
+}
+
 /// Top-level-Funktion für [compute]: Parst OCR-Text und gibt Betrag,
 /// normalisierte Artikel-Liste und Kategorien zurück.
 ///
@@ -752,6 +912,15 @@ List<String> parseItemsImpl(String text) {
 /// - `'categoryData'`: Liste von Kategorie-Maps aus der Datenbank
 ///   (jede Map hat `name` und `keywords`). Kann leer sein – dann greift der
 ///   statische [categoryMap]-Fallback.
+/// - `'productMappings'` *(optional)*: Liste von Maps aus der Tabelle
+///   `product_mappings` (Schlüssel: `raw_ocr_name`, `corrected_name`,
+///   `category_id`). Wenn ein normalisierter Artikelname mit einem
+///   `raw_ocr_name` übereinstimmt, wird er automatisch durch
+///   `corrected_name` ersetzt und die gespeicherte Kategorie zugewiesen.
+/// - `'spatialLines'` *(optional)*: Liste räumlicher Zeilendaten aus ML Kit
+///   (Schlüssel: `text`, `top`, `bottom`, `left`, `right`, `centerY`,
+///   `centerX`). Wenn angegeben, wird [parseSpatialItems] als primäre
+///   Matching-Strategie bevorzugt (Y-Achsen-Korridor-Logik).
 ///
 /// Nach dem Extrahieren der Artikel werden [normalizeName] und
 /// [_smartCategorize] auf jeden Artikel angewendet, sodass die
@@ -764,18 +933,69 @@ Map<String, dynamic> parseOcrText(Map<String, dynamic> params) {
   final text = params['text'] as String;
   final rawCategoryData = params['categoryData'] as List<dynamic>? ?? [];
   final categoryData = rawCategoryData.cast<Map<String, dynamic>>();
-  final rawItems = parseItemsImpl(text);
+
+  // Produkt-Mappings für den semantischen Lern-Loop laden.
+  final rawMappings = params['productMappings'] as List<dynamic>? ?? [];
+  final productMappings = rawMappings.cast<Map<String, dynamic>>();
+
+  // Räumliche Zeilendaten für Y-Achsen-Korridor-Matching.
+  final rawSpatialLines = params['spatialLines'] as List<dynamic>? ?? [];
+  final spatialLines = rawSpatialLines.cast<Map<String, dynamic>>();
+
+  // Primäre Strategie: Spatial-Matching, wenn Bounding-Box-Daten vorhanden.
+  List<String> rawItems;
+  if (spatialLines.isNotEmpty) {
+    rawItems = parseSpatialItems(spatialLines);
+    if (rawItems.isEmpty) {
+      // Kein räumliches Ergebnis → klassische Text-Parsing-Logik.
+      rawItems = parseItemsImpl(text);
+    }
+  } else {
+    rawItems = parseItemsImpl(text);
+  }
+
   final normalizedItems = <String>[];
   final categories = <String>[];
 
   for (final item in rawItems) {
     final (:name, :price) = parseLineItem(item);
     final normalizedName = normalizeName(name);
-    categories.add(_smartCategorize(normalizedName, categoryData));
+
+    // ── Semantischer Lern-Loop: Produkt-Mapping prüfen ──────────────────
+    // Wenn der normalisierte Name einem gespeicherten raw_ocr_name entspricht,
+    // wird er durch den corrected_name ersetzt und die hinterlegte Kategorie
+    // (sofern vorhanden) direkt zugewiesen.
+    String finalName = normalizedName;
+    String? mappedCategory;
+    for (final mapping in productMappings) {
+      final rawOcr = mapping['raw_ocr_name'] as String? ?? '';
+      if (rawOcr.toLowerCase() == normalizedName.toLowerCase()) {
+        finalName = mapping['corrected_name'] as String? ?? normalizedName;
+        final catId = mapping['category_id'];
+        if (catId != null) {
+          // Kategoriename via category_id aus categoryData suchen.
+          for (final cat in categoryData) {
+            if (cat['id'] == catId) {
+              mappedCategory = cat['name'] as String?;
+              break;
+            }
+          }
+        }
+        debugPrint(
+            '[OCR-Learning] "$normalizedName" → "$finalName" '
+            '(Kategorie: ${mappedCategory ?? "—"})');
+        break;
+      }
+    }
+
+    categories.add(
+      mappedCategory ?? _smartCategorize(finalName, categoryData),
+    );
+
     if (price != null) {
-      normalizedItems.add('$normalizedName  ${_formatPriceComma(price)}');
+      normalizedItems.add('$finalName  ${_formatPriceComma(price)}');
     } else {
-      normalizedItems.add(normalizedName);
+      normalizedItems.add(finalName);
     }
   }
 
@@ -884,6 +1104,32 @@ class OcrService {
 
     final fullText = recognizedText.text;
 
+    // ── Räumliche Zeilendaten extrahieren ────────────────────────────────────
+    // Die Bounding-Box-Koordinaten aus ML Kit werden als plain-Dart-Maps
+    // kodiert, damit sie sicher in einem Background-Isolate via `compute`
+    // verarbeitet werden können.
+    final spatialLines = <Map<String, dynamic>>[];
+    for (final block in recognizedText.blocks) {
+      for (final line in block.lines) {
+        final rect = line.boundingBox;
+        spatialLines.add({
+          'text': line.text,
+          'top': rect.top.toDouble(),
+          'bottom': rect.bottom.toDouble(),
+          'left': rect.left.toDouble(),
+          'right': rect.right.toDouble(),
+          'centerY': ((rect.top + rect.bottom) / 2.0),
+          'centerX': ((rect.left + rect.right) / 2.0),
+        });
+      }
+    }
+
+    // ── Händler-Erkennung (Merchant Anchor) ──────────────────────────────────
+    final detectedMerchant = detectMerchant(fullText);
+    if (detectedMerchant != null) {
+      debugPrint('[OcrService] Händler erkannt: $detectedMerchant');
+    }
+
     // Bild permanent speichern: aus dem temporären Cache-Verzeichnis in das
     // app-private Dokumenten-Verzeichnis kopieren, damit es auch nach dem
     // App-Neustart noch vorhanden ist.
@@ -892,6 +1138,7 @@ class OcrService {
     // Kategorien aus der Datenbank laden (für dynamische Zuordnung).
     // Schlägt das Laden fehl, greift der statische categoryMap-Fallback.
     List<Map<String, dynamic>> categoryData = [];
+    List<Map<String, dynamic>> productMappings = [];
     final db = _databaseService;
     if (db != null) {
       try {
@@ -900,6 +1147,12 @@ class OcrService {
       } catch (e) {
         debugPrint('[OcrService] Kategorien konnten nicht geladen werden: $e');
       }
+      try {
+        productMappings = await db.getProductMappings();
+      } catch (e) {
+        debugPrint(
+            '[OcrService] Produkt-Mappings konnten nicht geladen werden: $e');
+      }
     }
 
     // Parsing im Background-Isolate ausführen, damit der UI-Thread
@@ -907,6 +1160,8 @@ class OcrService {
     final result = await compute(parseOcrText, {
       'text': fullText,
       'categoryData': categoryData,
+      'productMappings': productMappings,
+      'spatialLines': spatialLines,
     });
 
     return Receipt(

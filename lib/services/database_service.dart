@@ -39,11 +39,16 @@ Future<String?> computeFileHash(String filePath) async {
 ///   - Initialisierung der Datenbank
 ///   - Einfügen, Laden und Löschen von Belegen
 ///   - Einfügen, Laden, Aktualisieren und Löschen von Kategorien
+///   - Upsert und Laden von Produkt-Korrekturen ([product_mappings])
 class DatabaseService {
   static const _dbName = 'belegscanner.db';
   static const _tableName = 'receipts';
   static const _categoriesTable = 'user_categories';
-  static const _dbVersion = 7;
+
+  /// Tabelle für den Lern-Feedback-Loop: speichert manuelle OCR-Korrekturen.
+  static const _mappingsTable = 'product_mappings';
+
+  static const _dbVersion = 8;
 
   Database? _db;
 
@@ -82,6 +87,14 @@ class DatabaseService {
             name TEXT NOT NULL,
             keywords TEXT NOT NULL DEFAULT '',
             color TEXT NOT NULL DEFAULT ''
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE $_mappingsTable (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raw_ocr_name TEXT NOT NULL UNIQUE,
+            corrected_name TEXT NOT NULL,
+            category_id INTEGER
           )
         ''');
         await _insertDefaultCategories(db);
@@ -161,6 +174,17 @@ class DatabaseService {
           await db.execute(
             'ALTER TABLE $_tableName ADD COLUMN fileHash TEXT',
           );
+        }
+        // Version 7 → Version 8: product_mappings-Tabelle für Lern-Loop.
+        if (oldVersion < 8) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS $_mappingsTable (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              raw_ocr_name TEXT NOT NULL UNIQUE,
+              corrected_name TEXT NOT NULL,
+              category_id INTEGER
+            )
+          ''');
         }
       },
     );
@@ -376,6 +400,47 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Produkt-Mappings (Lern-Feedback-Loop)
+  // ---------------------------------------------------------------------------
+
+  /// Speichert oder aktualisiert eine manuelle OCR-Korrektur.
+  ///
+  /// [rawOcrName] ist der Originaltext aus dem OCR-Ergebnis (nach Normalisierung),
+  /// [correctedName] der vom Nutzer eingegebene korrekte Name,
+  /// [categoryId] die optionale Datenbank-ID der zugeordneten Kategorie.
+  ///
+  /// Bereits existierende Einträge für denselben [rawOcrName] werden
+  /// vollständig überschrieben (REPLACE-Semantik auf dem UNIQUE-Index).
+  Future<void> upsertProductMapping(
+    String rawOcrName,
+    String correctedName,
+    int? categoryId,
+  ) async {
+    final db = await database;
+    await db.insert(
+      _mappingsTable,
+      {
+        'raw_ocr_name': rawOcrName,
+        'corrected_name': correctedName,
+        'category_id': categoryId,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    debugPrint(
+        '[DatabaseService] Mapping gespeichert: "$rawOcrName" → '
+        '"$correctedName" (category_id=$categoryId)');
+  }
+
+  /// Gibt alle gespeicherten Produkt-Mappings als Liste von Maps zurück.
+  ///
+  /// Jede Map enthält die Schlüssel `raw_ocr_name` (String),
+  /// `corrected_name` (String) und `category_id` (int?).
+  Future<List<Map<String, dynamic>>> getProductMappings() async {
+    final db = await database;
+    return db.query(_mappingsTable);
   }
 
   // ---------------------------------------------------------------------------

@@ -13,32 +13,31 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
-
 rootProject.buildDir = '../build'
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
 
-// Dieser Block repariert Namespaces UND Java-Versionen gleichzeitig
+// JVM Version & Namespace Fix ohne 'afterEvaluate'
 subprojects {
-    afterEvaluate { project ->
-        if (project.hasProperty('android')) {
+    // 1. JVM Target für Kotlin & Java erzwingen
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+            jvmTarget = "17"
+        }
+    }
+    tasks.withType(JavaCompile).configureEach {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // 2. Namespace-Fix für alte Plugins
+    project.plugins.whenPluginAdded { plugin ->
+        if (plugin.class.name.startsWith('com.android.build.gradle.LibraryPlugin') ||
+            plugin.class.name.startsWith('com.android.build.gradle.AppPlugin')) {
             project.android {
-                // Fix für: "Namespace not specified"
                 if (namespace == null) {
                     namespace = project.group
-                }
-                
-                // Fix für: "JVM target compatibility" (Java 17)
-                compileOptions {
-                    sourceCompatibility JavaVersion.VERSION_17
-                    targetCompatibility JavaVersion.VERSION_17
-                }
-                
-                if (project.plugins.hasPlugin('kotlin-android')) {
-                    kotlinOptions {
-                        jvmTarget = '17'
-                    }
                 }
             }
         }

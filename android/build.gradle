@@ -4,6 +4,13 @@ allprojects {
         google()
         mavenCentral()
     }
+
+    // Force JVM target 17 for every Kotlin compile task in every project (including root).
+    // This prevents JVM-target mismatch errors (e.g. 1.8 vs 17) from older Flutter
+    // plugins that do not set kotlinOptions themselves.
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions { jvmTarget = "17" }
+    }
 }
 
 rootProject.buildDir = "../build"
@@ -14,12 +21,17 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Force Java 17 / JVM target 17 for every Kotlin compile task in every subproject.
-// This prevents JVM-target mismatch errors (e.g. 1.8 vs 17) from older Flutter
-// plugins that do not set kotlinOptions themselves.
+// Force Java 17 compileOptions for every Android library subproject.
 subprojects {
-    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-        kotlinOptions { jvmTarget = "17" }
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            android {
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
+            }
+        }
     }
 }
 

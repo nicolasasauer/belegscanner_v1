@@ -14,27 +14,29 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Force Java 17 / JVM target 17 for every Kotlin compile task in every subproject.
-// This prevents JVM-target mismatch errors (e.g. 1.8 vs 17) from older Flutter
-// plugins that do not set kotlinOptions themselves.
+// Ersetze alles ab Zeile 17 mit diesem Block
 subprojects {
     tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-        kotlinOptions { jvmTarget = "17" }
+        kotlinOptions {
+            jvmTarget = "17"
+        }
+    }
+    tasks.withType(JavaCompile) {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
-// AGP 8+ requires a namespace declaration in every library module's build.gradle.
-// Older Flutter plugins (e.g. image_gallery_saver) don't declare one, so we
-// inject the plugin's group ID as its namespace using pluginManager.withPlugin,
-// which fires eagerly when the plugin is applied – never after evaluation.
+// Dieser Teil behebt den Namespace-Fehler bei älteren Plugins
 subprojects {
-    pluginManager.withPlugin('com.android.library') {
-        if (android.namespace == null) {
-            android.namespace = project.group
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android {
+                if (namespace == null) {
+                    namespace = project.group
+                }
+            }
         }
     }
 }
 
-tasks.register("clean", Delete) {
-    delete rootProject.buildDir
-}

@@ -49,6 +49,12 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
   /// Kategorien der Einzelposten (parallele Liste zu den Controllern).
   late List<String> _categories;
 
+  /// Originale Artikelnamen vor dem Bearbeiten (für den Lern-Feedback-Loop).
+  late List<String> _originalNames;
+
+  /// Originale Kategorien vor dem Bearbeiten (für den Lern-Feedback-Loop).
+  late List<String> _originalCategories;
+
   bool _isSaving = false;
 
   /// Gibt an, ob die Detailansicht im Bearbeitungs-Modus ist.
@@ -80,6 +86,8 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
     _nameControllers = [];
     _priceControllers = [];
     _categories = [];
+    _originalNames = [];
+    _originalCategories = [];
     for (var i = 0; i < items.length; i++) {
       final (:name, :price) = parseLineItem(items[i]);
       _nameControllers.add(TextEditingController(text: name));
@@ -88,7 +96,10 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
       );
       priceCtrl.addListener(_onPriceChanged);
       _priceControllers.add(priceCtrl);
-      _categories.add(widget.receipt.categoryAt(i));
+      final cat = widget.receipt.categoryAt(i);
+      _categories.add(cat);
+      _originalNames.add(name);
+      _originalCategories.add(cat);
     }
   }
 
@@ -141,6 +152,10 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
   }
 
   /// Speichert die geänderten Positionen in der Datenbank.
+  ///
+  /// Für jeden Artikel, dessen Name oder Kategorie gegenüber dem Original
+  /// geändert wurde, wird ein Eintrag in der `product_mappings`-Tabelle
+  /// gespeichert (Lern-Feedback-Loop).
   Future<void> _saveChanges() async {
     setState(() => _isSaving = true);
     try {
@@ -163,12 +178,68 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
       );
       await widget.databaseService.insertReceipt(updatedReceipt);
 
+      // ── Lern-Feedback-Loop ────────────────────────────────────────────────
+      // Für jeden Artikel prüfen, ob Name oder Kategorie geändert wurde.
+      // Wenn ja, Mapping in product_mappings speichern und SnackBar anzeigen.
+      final learnedMappings = <String>[];
+
+      // Kategorien-ID-Lookup: Kategorienamen → Datenbank-ID
+      final Map<String, int?> categoryIdByName = {};
+      try {
+        final cats = await widget.databaseService.getCategories();
+        for (final cat in cats) {
+          if (cat.id != null) {
+            categoryIdByName[cat.name] = cat.id;
+          }
+        }
+      } catch (_) {}
+
+      for (var i = 0; i < _nameControllers.length; i++) {
+        final newName = _nameControllers[i].text.trim();
+        if (newName.isEmpty) continue;
+        final newCategory =
+            i < _categories.length ? _categories[i] : 'Sonstiges';
+        final originalName = i < _originalNames.length ? _originalNames[i] : '';
+        final originalCategory =
+            i < _originalCategories.length ? _originalCategories[i] : '';
+
+        // Änderung erkennen: Name oder Kategorie weicht vom Original ab
+        final nameChanged =
+            originalName.isNotEmpty && newName != originalName;
+        final categoryChanged = originalCategory.isNotEmpty &&
+            newCategory != originalCategory;
+
+        if ((nameChanged || categoryChanged) && originalName.isNotEmpty) {
+          final categoryId = categoryIdByName[newCategory];
+          await widget.databaseService.upsertProductMapping(
+            originalName,
+            newName,
+            categoryId,
+          );
+          learnedMappings.add('$newName → $newCategory');
+        }
+      }
+
       if (mounted) {
         widget.onSaved(updatedReceipt);
         setState(() => _isEditing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Änderungen gespeichert.')),
-        );
+
+        // SnackBar für gelernte Mappings anzeigen
+        if (learnedMappings.isNotEmpty) {
+          final label = learnedMappings.length == 1
+              ? 'Gelernt: "${learnedMappings.first}"'
+              : 'Gelernt: ${learnedMappings.length} neue Zuordnungen';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(label),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Änderungen gespeichert.')),
+          );
+        }
       }
     } catch (e, st) {
       debugPrint('[ReceiptDetailView] Save failed: $e\n$st');

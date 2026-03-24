@@ -14,24 +14,28 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Ersetze alles ab Zeile 17 mit diesem Block
+rootProject.buildDir = '../build'
 subprojects {
-    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-        kotlinOptions {
-            jvmTarget = "17"
-        }
-    }
-    tasks.withType(JavaCompile) {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
 
-// Dieser Teil behebt den Namespace-Fehler bei älteren Plugins
+// DIESER BLOCK MUSS VOR 'evaluationDependsOn' STEHEN!
 subprojects {
     afterEvaluate { project ->
+        // 1. Fix für JVM Version (Java 17)
         if (project.hasProperty('android')) {
             project.android {
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
+                // Falls Kotlin genutzt wird, auch hier 17 erzwingen
+                if (project.plugins.hasPlugin('kotlin-android')) {
+                    kotlinOptions {
+                        jvmTarget = '17'
+                    }
+                }
+                // 2. Fix für Namespace-Fehler bei alten Plugins
                 if (namespace == null) {
                     namespace = project.group
                 }
@@ -40,3 +44,10 @@ subprojects {
     }
 }
 
+subprojects {
+    project.evaluationDependsOn(':app')
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

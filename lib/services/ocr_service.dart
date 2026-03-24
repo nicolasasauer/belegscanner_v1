@@ -773,8 +773,21 @@ String? detectMerchant(String text) {
   return null;
 }
 
-/// Maximale Pixel-Abstand auf der Y-Achse, innerhalb dessen ein Preis-Label
-/// als "auf gleicher Höhe" mit einem Artikelnamen gilt.
+/// Maximale Y-Abstand (in Pixeln) zwischen dem vertikalen Mittelpunkt eines
+/// Artikelnamens und eines Preises, damit sie als "auf gleicher Zeile liegend"
+/// gelten.
+///
+/// **Begründung für 20 px:**
+/// Bei einem typischen Belegfoto (ca. 1080 × 1920 px) ist eine gedruckte Zeile
+/// auf dem physischen Bon etwa 8–12 Pixel hoch. OCR-Ungenauigkeiten und
+/// leichte Bildschiefstellungen verschieben den ermittelten `centerY`-Wert um
+/// ±3–8 Pixel. Ein Korridor von 20 Pixeln deckt zuverlässig dieselbe Zeile ab
+/// (Δ < 10 px typisch), ohne auf die nächste Bon-Zeile überzuspringen
+/// (Zeilenabstand > 20 px bei gängigen Kassenbons).
+///
+/// Hinweis: Bei sehr hochauflösenden Scans oder stark verzerrten Bildern kann
+/// ein größerer Wert sinnvoll sein. Eine künftige Konfigurationsmöglichkeit ist
+/// explizit vorgesehen.
 ///
 /// Wird in [parseSpatialItems] für die Korridor-Zuordnung verwendet.
 const double kSpatialYCorridor = 20.0;

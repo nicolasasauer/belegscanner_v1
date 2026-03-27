@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
@@ -746,34 +747,7 @@ List<String> parseItemsImpl(String text) {
   return result;
 }
 
-/// Bekannte Händler-Anker: Schlüsselwörter, die in der Bon-Kopfzeile
-/// einem bestimmten Händler zugeordnet sind.
-///
-/// Der Vergleich erfolgt case-insensitiv als Substring-Match.
-const Map<String, String> merchantAnchors = {
-  'Museumstraße': 'Spar',
-  'SPAR': 'Spar',
-  'dm drogerie': 'dm',
-  'Hofer': 'Hofer',
-  'BILLA': 'Billa',
-  'MERKUR': 'Merkur',
-  'PENNY': 'Penny',
-  'LIDL': 'Lidl',
-  'ALDI': 'Aldi',
-};
 
-/// Erkennt den Händlernamen anhand von [merchantAnchors] im OCR-Text [text].
-///
-/// Gibt `null` zurück, wenn kein Anker passt.
-String? detectMerchant(String text) {
-  final lower = text.toLowerCase();
-  for (final entry in merchantAnchors.entries) {
-    if (lower.contains(entry.key.toLowerCase())) {
-      return entry.value;
-    }
-  }
-  return null;
-}
 
 /// Versucht, ein Druckdatum im Format DD.MM.YYYY aus dem OCR-Text zu extrahieren.
 ///

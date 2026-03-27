@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -773,6 +775,57 @@ String? detectMerchant(String text) {
   return null;
 }
 
+/// Versucht, ein Druckdatum im Format DD.MM.YYYY aus dem OCR-Text zu extrahieren.
+///
+/// Gibt `null` zurück, wenn kein valides Datum gefunden wird.
+String? detectDate(String text) {
+  final datePattern = RegExp(r'\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\b');
+  for (final match in datePattern.allMatches(text)) {
+    try {
+      final day = int.parse(match.group(1)!);
+      final month = int.parse(match.group(2)!);
+      var year = int.parse(match.group(3)!);
+      if (year < 100) year += 2000;
+      if (day > 0 && day <= 31 && month > 0 && month <= 12 && year >= 2000 && year <= 2100) {
+        return DateTime(year, month, day).toIso8601String();
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/// Versucht, einen Händler-/Geschäftsnamen aus dem OCR-Text zu extrahieren.
+/// Sucht nach typischen österreichischen/deutschen Handelsketten.
+String? detectMerchant(String text) {
+  final lowerText = text.toLowerCase();
+  final knownMerchants = [
+    'billa', 'billa plus', 'spar', 'eurospar', 'interspar', 'hofer', 
+    'lidl', 'penny', 'dm', 'bipa', 'mueller', 'müller', 'rewe', 
+    'zielpunkt', 'merkur'
+  ];
+
+  for (final merchant in knownMerchants) {
+    if (lowerText.contains(merchant)) {
+      // Return the correct casing
+      return merchant == 'mueller' ? 'Müller' : 
+             merchant.split(' ').map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+    }
+  }
+
+  // Fallback: Die erste valide Textzeile als Händlername annehmen
+  final lines = text.split('\n');
+  for (final line in lines) {
+    final clean = line.trim();
+    if (clean.length > 2 && !clean.contains(RegExp(r'\d'))) {
+      if (clean.toLowerCase() != 'beleg' && clean.toLowerCase() != 'rechnung') {
+        return clean;
+      }
+    }
+  }
+
+  return null;
+}
+
 /// Maximale Y-Abstand (in Pixeln) zwischen dem vertikalen Mittelpunkt eines
 /// Artikelnamens und eines Preises, damit sie als "auf gleicher Zeile liegend"
 /// gelten.
@@ -1003,6 +1056,9 @@ Map<String, dynamic> parseOcrText(Map<String, dynamic> params) {
     'amount': parseAmountImpl(text),
     'items': normalizedItems,
     'categories': categories,
+    'storeName': detectMerchant(text),
+    'date': detectDate(text),
+    'spatialData': jsonEncode(spatialLines),
   };
 }
 
@@ -1082,6 +1138,14 @@ class OcrService {
     if (imageFile == null) {
       // Benutzer hat den Vorgang abgebrochen
       return null;
+    }
+
+    if (source == ImageSource.camera) {
+      try {
+        await ImageGallerySaver.saveFile(imageFile.path, name: 'BongScanner');
+      } catch (e) {
+        debugPrint('[OcrService] Fehler beim Speichern in der Galerie: $e');
+      }
     }
 
     return _processImage(imageFile.path);

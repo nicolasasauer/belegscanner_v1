@@ -48,7 +48,7 @@ class DatabaseService {
   /// Tabelle für den Lern-Feedback-Loop: speichert manuelle OCR-Korrekturen.
   static const _mappingsTable = 'product_mappings';
 
-  static const _dbVersion = 8;
+  static const _dbVersion = 9;
 
   Database? _db;
 
@@ -75,6 +75,8 @@ class DatabaseService {
             items TEXT NOT NULL,
             categories TEXT NOT NULL DEFAULT '[]',
             imagePath TEXT,
+            storeName TEXT,
+            spatialData TEXT,
             rawText TEXT,
             status TEXT NOT NULL DEFAULT 'completed',
             progress REAL NOT NULL DEFAULT 1.0,
@@ -122,9 +124,9 @@ class DatabaseService {
           await db.execute('''
             INSERT INTO ${_tableName}_new
               (id, date, totalAmount, items, categories, imagePath,
-               rawText, status, progress, fileHash)
+               storeName, spatialData, rawText, status, progress, fileHash)
               SELECT id, date, totalAmount, items, '[]', imagePath,
-                     NULL, 'completed', 1.0, NULL
+                     NULL, NULL, NULL, 'completed', 1.0, NULL
               FROM $_tableName
           ''');
           await db.execute('DROP TABLE $_tableName');
@@ -141,6 +143,10 @@ class DatabaseService {
             await db.execute(
               'ALTER TABLE $_tableName ADD COLUMN rawText TEXT',
             );
+          }
+          if (newVersion >= 9) {
+            await db.execute('ALTER TABLE $_tableName ADD COLUMN storeName TEXT');
+            await db.execute('ALTER TABLE $_tableName ADD COLUMN spatialData TEXT');
           }
         } else if (oldVersion < 4) {
           // Version 3 → Version 4: Roh-OCR-Text-Spalte hinzufügen.
@@ -185,6 +191,11 @@ class DatabaseService {
               category_id INTEGER
             )
           ''');
+        }
+        // Version 8 → Version 9: storeName und spatialData
+        if (oldVersion < 9) {
+          await db.execute('ALTER TABLE $_tableName ADD COLUMN storeName TEXT');
+          await db.execute('ALTER TABLE $_tableName ADD COLUMN spatialData TEXT');
         }
       },
     );

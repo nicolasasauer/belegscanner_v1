@@ -50,13 +50,15 @@ class ReceiptListTile extends StatelessWidget {
             const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: _buildThumbnail(context),
         title: Text(
-          currencyFormat.format(receipt.totalAmount),
+          receipt.storeName ?? 'Unbekannter Händler',
           style: Theme.of(context)
               .textTheme
               .titleMedium
               ?.copyWith(fontWeight: FontWeight.bold),
         ),
-        subtitle: Text(dateFormat.format(receipt.date)),
+        subtitle: Text(
+          '${currencyFormat.format(receipt.totalAmount)} • ${dateFormat.format(receipt.date)}',
+        ),
         trailing: Text(
           '${receipt.items.length} Pos.',
           style: Theme.of(context).textTheme.bodySmall,

@@ -44,6 +44,7 @@ class _HomePageState extends State<HomePage> {
   String _searchQuery = '';
   bool _isSearching = false;
   bool _isFabExpanded = false;
+  bool _sortAscending = false;
 
   // ---------------------------------------------------------------------------
   // Services & Formatter
@@ -130,19 +131,25 @@ class _HomePageState extends State<HomePage> {
       }
       if (_searchQuery.isNotEmpty) {
         final q = _searchQuery.toLowerCase();
-        final matchesMerchant = receipt.items.isNotEmpty &&
-            receipt.items.first.toLowerCase().contains(q);
+        final matchesMerchant = (receipt.storeName?.toLowerCase().contains(q) ?? false) ||
+            (receipt.items.isNotEmpty && receipt.items.first.toLowerCase().contains(q));
         final matchesAmount =
             receipt.totalAmount.toString().contains(q) ||
                 _currencyFormat.format(receipt.totalAmount).contains(q);
         final matchesItems =
             receipt.items.any((item) => item.toLowerCase().contains(q));
-        if (!matchesMerchant && !matchesAmount && !matchesItems) {
+        final matchesRawText = receipt.rawText?.toLowerCase().contains(q) ?? false;
+        
+        if (!matchesMerchant && !matchesAmount && !matchesItems && !matchesRawText) {
           return false;
         }
       }
       return true;
-    }).toList();
+    }).toList()
+      ..sort((a, b) {
+        final cmp = a.date.compareTo(b.date);
+        return _sortAscending ? cmp : -cmp;
+      });
   }
 
   // ---------------------------------------------------------------------------
@@ -415,6 +422,76 @@ class _HomePageState extends State<HomePage> {
         );
       }
     }
+  Future<void> _exportKnowledge() async {
+    try {
+      await ExportService.exportKnowledge(_databaseService);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fehler beim Exportieren: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importKnowledge() async {
+    try {
+      final count = await ExportService.importKnowledge(_databaseService);
+      if (!mounted) return;
+      if (count >= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$count Mappings erfolgreich importiert.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fehler beim Importieren: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportKnowledge() async {
+    try {
+      await ExportService.exportKnowledge(_databaseService);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fehler beim Exportieren: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importKnowledge() async {
+    try {
+      final count = await ExportService.importKnowledge(_databaseService);
+      if (!mounted) return;
+      if (count >= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$count Mappings erfolgreich importiert.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fehler beim Importieren: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -492,6 +569,12 @@ class _HomePageState extends State<HomePage> {
             ),
           if (_receipts.isNotEmpty && !_isSearching)
             IconButton(
+              icon: Icon(_sortAscending ? Icons.arrow_upward : Icons.arrow_downward),
+              tooltip: 'Sortierung umkehren',
+              onPressed: () => setState(() => _sortAscending = !_sortAscending),
+            ),
+          if (_receipts.isNotEmpty && !_isSearching)
+            IconButton(
               icon: const Icon(Icons.upload_file_outlined),
               tooltip: 'Belege als CSV exportieren',
               onPressed: _isScanning ? null : _exportToCsv,
@@ -504,6 +587,28 @@ class _HomePageState extends State<HomePage> {
               icon: const Icon(Icons.filter_alt_off),
               tooltip: 'Filter zurücksetzen',
               onPressed: _clearFilters,
+            ),
+          if (!_isSearching)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Weitere Optionen',
+              onSelected: (value) {
+                if (value == 'export_knowledge') {
+                  _exportKnowledge();
+                } else if (value == 'import_knowledge') {
+                  _importKnowledge();
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'export_knowledge',
+                  child: Text('Wissen exportieren (JSON)'),
+                ),
+                const PopupMenuItem(
+                  value: 'import_knowledge',
+                  child: Text('Wissen importieren (JSON)'),
+                ),
+              ],
             ),
         ],
         bottom: _isScanning

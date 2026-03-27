@@ -221,11 +221,17 @@ class ProcessorService {
       });
 
       // ── Schritt 7: Abgeschlossenen Beleg speichern ───────────────────────
+      final dateStr = result['date'] as String?;
+      final parsedDate = dateStr != null ? DateTime.tryParse(dateStr) : null;
+
       final completed = receipt.copyWith(
+        date: parsedDate ?? receipt.date,
         totalAmount: result['amount'] as double,
         items: List<String>.from(result['items'] as List),
         categories: List<String>.from(result['categories'] as List),
         imagePath: permanentPath ?? tempPath,
+        storeName: result['storeName'] as String?,
+        spatialData: result['spatialData'] as String?,
         rawText: fullText.isEmpty ? null : fullText,
         status: 'completed',
         progress: 1.0,

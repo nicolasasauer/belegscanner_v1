@@ -26,6 +26,16 @@ class Receipt {
   /// (z. B. bei Altdaten oder nach einem fehlgeschlagenen Kopiervorgang).
   final String? imagePath;
 
+  /// Erkannter Händler-/Geschäftsname (z. B. "Spar", "dm", "Lidl").
+  ///
+  /// Kann `null` sein, wenn der Händler nicht erkannt wurde.
+  final String? storeName;
+
+  /// Lokale JSON-Datenstruktur der Bounding-Boxen der erkannten Textzeilen.
+  /// 
+  /// Speichert die OCR-Rohdaten (Koordinaten) als String für das Debugging UI.
+  final String? spatialData;
+
   /// Ungefilterte Rohausgabe des OCR-Scans (kompletter Text-Dump).
   ///
   /// Dient als Debugging-Gedächtnis: enthält alles, was die KI auf dem Bon
@@ -60,6 +70,8 @@ class Receipt {
     required this.items,
     this.categories = const [],
     this.imagePath,
+    this.storeName,
+    this.spatialData,
     this.rawText,
     this.status = 'completed',
     this.progress = 1.0,
@@ -81,6 +93,8 @@ class Receipt {
     List<String>? items,
     List<String>? categories,
     String? imagePath,
+    String? storeName,
+    String? spatialData,
     String? rawText,
     String? status,
     double? progress,
@@ -93,6 +107,8 @@ class Receipt {
       items: items ?? this.items,
       categories: categories ?? this.categories,
       imagePath: imagePath ?? this.imagePath,
+      storeName: storeName ?? this.storeName,
+      spatialData: spatialData ?? this.spatialData,
       rawText: rawText ?? this.rawText,
       status: status ?? this.status,
       progress: progress ?? this.progress,
@@ -112,6 +128,8 @@ class Receipt {
       'items': jsonEncode(items),
       'categories': jsonEncode(categories),
       'imagePath': imagePath,
+      'storeName': storeName,
+      'spatialData': spatialData,
       'rawText': rawText,
       'status': status,
       'progress': progress,
@@ -139,6 +157,8 @@ class Receipt {
       items: decoded.cast<String>(),
       categories: categories,
       imagePath: map['imagePath'] as String?,
+      storeName: map['storeName'] as String?,
+      spatialData: map['spatialData'] as String?,
       rawText: map['rawText'] as String?,
       status: map['status'] as String? ?? 'completed',
       progress: (map['progress'] as num?)?.toDouble() ?? 1.0,
@@ -150,6 +170,7 @@ class Receipt {
   String toString() {
     return 'Receipt(id: $id, date: $date, totalAmount: $totalAmount, '
         'items: $items, categories: $categories, imagePath: $imagePath, '
+        'storeName: $storeName, spatialData: ${spatialData != null ? "y" : "n"}, '
         'rawText: ${rawText != null ? "${rawText!.length} chars" : "null"}, '
         'status: $status, progress: $progress, fileHash: $fileHash)';
   }

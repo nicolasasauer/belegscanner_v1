@@ -8,6 +8,7 @@ import '../models/receipt.dart';
 import '../services/category_service.dart';
 import '../services/database_service.dart';
 import '../services/ocr_service.dart';
+import '../pages/ocr_debug_page.dart';
 
 // =============================================================================
 // Beleg-Detail BottomSheet Widget
@@ -381,9 +382,27 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
                           semanticLabel: 'Weitere Optionen',
                         ),
                         tooltip: 'Weitere Optionen',
-                        onSelected: (value) {
+                        onSelected: (value) async {
                           if (value == 'debug_raw_ocr') {
-                            _showRawOcrSheet();
+                            final updatedReceipt = await Navigator.push<Receipt>(
+                              context,
+                              MaterialPageRoute<Receipt>(
+                                builder: (_) => OcrDebugPage(
+                                  receipt: widget.receipt,
+                                  databaseService: widget.databaseService,
+                                ),
+                              ),
+                            );
+                            if (updatedReceipt != null && mounted) {
+                              widget.onSaved(updatedReceipt);
+                              setState(() {
+                                // Since we mutate state locally, we might need a whole reload.
+                                // Actually, triggering onSaved propagates it up to HomePage.
+                                // We can just pop and let the user open it again, or we can update the UI locally:
+                                _editedTotalAmount = updatedReceipt.totalAmount;
+                                _initControllers(updatedReceipt.items);
+                              });
+                            }
                           } else if (value == 'save_to_gallery') {
                             widget.onSaveToGallery?.call(widget.receipt);
                           }
@@ -513,124 +532,29 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
     }
   }
 
-  void _triggerDebugMode() {
+  void _triggerDebugMode() async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Entwicklermodus: Rohdaten werden geladen...'),
         duration: Duration(seconds: 2),
       ),
     );
-    _showRawOcrSheet();
-  }
-
-  void _showRawOcrSheet() {
-    final rawText = widget.receipt.rawText;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    final updatedReceipt = await Navigator.push<Receipt>(
+      context,
+      MaterialPageRoute<Receipt>(
+        builder: (_) => OcrDebugPage(
+          receipt: widget.receipt,
+          databaseService: widget.databaseService,
+        ),
       ),
-      builder: (ctx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          maxChildSize: 0.95,
-          minChildSize: 0.4,
-          expand: false,
-          builder: (_, scrollController) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Drag-Handle
-                  Center(
-                    child: Container(
-                      width: 48,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Theme.of(ctx).colorScheme.outlineVariant,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-
-                  // Titel-Zeile
-                  Row(
-                    children: [
-                      const Icon(Icons.bug_report_outlined, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Raw OCR – Rohdaten',
-                          style: Theme.of(ctx)
-                              .textTheme
-                              .titleMedium
-                              ?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      if (rawText != null && rawText.isNotEmpty)
-                        IconButton(
-                          icon: const Icon(Icons.copy_outlined),
-                          tooltip: 'In Zwischenablage kopieren',
-                          onPressed: () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: rawText),
-                            );
-                            if (ctx.mounted) {
-                              ScaffoldMessenger.of(ctx).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Rohtext in Zwischenablage kopiert.',
-                                  ),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                    ],
-                  ),
-
-                  const Divider(height: 16),
-
-                  Expanded(
-                    child: rawText == null || rawText.isEmpty
-                        ? Center(
-                            child: Text(
-                              'Kein Rohtext vorhanden.\n'
-                              '(Beleg wurde vor dem Update gescannt.)',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(ctx)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(
-                                    color: Theme.of(ctx)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                            ),
-                          )
-                        : SingleChildScrollView(
-                            controller: scrollController,
-                            child: SelectableText(
-                              rawText,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 12,
-                                height: 1.5,
-                              ),
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
     );
+    if (updatedReceipt != null && mounted) {
+      widget.onSaved(updatedReceipt);
+      setState(() {
+        _editedTotalAmount = updatedReceipt.totalAmount;
+        _initControllers(updatedReceipt.items);
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -146,6 +146,7 @@ class _ReceiptDetailViewState extends State<ReceiptDetailView> {
   }
 
   void _deleteItem(int index) {
+    if (index < 0 || index >= _nameControllers.length) return;
     _nameControllers[index].dispose();
     _priceControllers[index].dispose();
     setState(() {

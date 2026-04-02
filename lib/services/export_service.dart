@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 
+import '../models/category.dart';
 import '../models/receipt.dart';
 import 'database_service.dart';
 import 'ocr_service.dart';
@@ -191,25 +192,31 @@ class ExportService {
 
       int mappingCount = 0;
 
-      // Import categories (ignore existing names to prevent duplicates maybe?)
-      if (data.containsKey('categories')) {
+      // Import categories (skip entries with names that already exist).
+      if (data.containsKey('categories') &&
+          data['categories'] is List<dynamic>) {
         final existingCats = await dbService.getCategories();
         final existingNames = existingCats.map((c) => c.name).toSet();
-        
-        // Let's just avoid perfect-name duplicates for simplicity.
-        // Or not strictly required as the app logic handles it.
-        // For now, only mappings are strictly requested, but we import categories too 
-        // if they don't break things.
+
+        final cats = data['categories'] as List<dynamic>;
+        for (final c in cats) {
+          if (c is! Map<String, dynamic>) continue;
+          final name = c['name'] as String?;
+          if (name != null && !existingNames.contains(name)) {
+            await dbService.insertCategory(Category.fromMap(c));
+          }
+        }
       }
 
-      if (data.containsKey('mappings')) {
+      if (data.containsKey('mappings') &&
+          data['mappings'] is List<dynamic>) {
         final mappings = data['mappings'] as List<dynamic>;
         for (final m in mappings) {
-          final mapping = m as Map<String, dynamic>;
-          final raw = mapping['raw_ocr_name'] as String?;
-          final corrected = mapping['corrected_name'] as String?;
+          if (m is! Map<String, dynamic>) continue;
+          final raw = m['raw_ocr_name'] as String?;
+          final corrected = m['corrected_name'] as String?;
           if (raw != null && corrected != null) {
-            await dbService.upsertProductMapping(raw, corrected, mapping['category_id'] as int?);
+            await dbService.upsertProductMapping(raw, corrected, m['category_id'] as int?);
             mappingCount++;
           }
         }

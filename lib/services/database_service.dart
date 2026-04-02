@@ -124,9 +124,9 @@ class DatabaseService {
           await db.execute('''
             INSERT INTO ${_tableName}_new
               (id, date, totalAmount, items, categories, imagePath,
-               storeName, spatialData, rawText, status, progress, fileHash)
+               rawText, status, progress, fileHash)
               SELECT id, date, totalAmount, items, '[]', imagePath,
-                     NULL, NULL, NULL, 'completed', 1.0, NULL
+                     NULL, 'completed', 1.0, NULL
               FROM $_tableName
           ''');
           await db.execute('DROP TABLE $_tableName');

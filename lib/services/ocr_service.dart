@@ -778,22 +778,23 @@ String? detectMerchant(String text) {
     'zielpunkt', 'merkur'
   ];
 
+  // Merchants that must keep their exact canonical casing.
+  const canonicalNames = {
+    'dm': 'dm',
+    'mueller': 'Müller',
+    'müller': 'Müller',
+  };
+
   for (final merchant in knownMerchants) {
     if (lowerText.contains(merchant)) {
-      // Return the correct casing
-      return merchant == 'mueller' ? 'Müller' : 
-             merchant.split(' ').map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
-    }
-  }
-
-  // Fallback: Die erste valide Textzeile als Händlername annehmen
-  final lines = text.split('\n');
-  for (final line in lines) {
-    final clean = line.trim();
-    if (clean.length > 2 && !clean.contains(RegExp(r'\d'))) {
-      if (clean.toLowerCase() != 'beleg' && clean.toLowerCase() != 'rechnung') {
-        return clean;
+      if (canonicalNames.containsKey(merchant)) {
+        return canonicalNames[merchant];
       }
+      // Default: title-case each word.
+      return merchant
+          .split(' ')
+          .map((w) => w[0].toUpperCase() + w.substring(1))
+          .join(' ');
     }
   }
 

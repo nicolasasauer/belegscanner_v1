@@ -65,8 +65,8 @@ class FilterBar extends StatelessWidget {
                 context: context,
                 label: selectedDay != null
                     ? 'Tag: ${selectedDay.toString().padLeft(2, '0')}.'
-                        '${selectedMonth.toString().padLeft(2, '0')}.'
-                        '$selectedYear'
+                        '${(selectedMonth ?? 0).toString().padLeft(2, '0')}.'
+                        '${selectedYear?.toString() ?? '----'}'
                     : 'Tag',
                 isSelected: selectedDay != null,
                 onTap: onPickDay,
@@ -130,6 +130,6 @@ class FilterBar extends StatelessWidget {
       'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
       'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
     ];
-    return names[month - 1];
+    return month >= 1 && month <= 12 ? names[month - 1] : '';
   }
 }

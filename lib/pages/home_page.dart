@@ -422,40 +422,6 @@ class _HomePageState extends State<HomePage> {
         );
       }
     }
-  Future<void> _exportKnowledge() async {
-    try {
-      await ExportService.exportKnowledge(_databaseService);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Fehler beim Exportieren: $e'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _importKnowledge() async {
-    try {
-      final count = await ExportService.importKnowledge(_databaseService);
-      if (!mounted) return;
-      if (count >= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$count Mappings erfolgreich importiert.')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Fehler beim Importieren: $e'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _exportKnowledge() async {

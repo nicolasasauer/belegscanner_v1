@@ -354,7 +354,7 @@ class DatabaseService {
     );
   }
 
-  /// Gibt die Ausgaben des aktuellen Monats gruppiert nach Kategorie zurück.
+  /// Gibt die Ausgaben des angegebenen Monats gruppiert nach Kategorie zurück.
   ///
   /// Jedes Element der Liste ist eine Map mit den Schlüsseln:
   ///   - `category` (String): Kategoriename
@@ -362,14 +362,15 @@ class DatabaseService {
   ///
   /// Belege ohne Kategorie-Zuordnung werden unter „Sonstiges" zusammengefasst.
   /// Die Zuordnung erfolgt über die pro-Artikel gespeicherte `categories`-Liste.
-  Future<List<Map<String, dynamic>>> getCategoryTotals() async {
+  /// Wenn [month] nicht angegeben ist, wird der aktuelle Monat verwendet.
+  Future<List<Map<String, dynamic>>> getCategoryTotals({DateTime? month}) async {
     final db = await database;
-    final now = DateTime.now();
+    final ref = month ?? DateTime.now();
     final firstDay =
-        DateTime(now.year, now.month, 1).toIso8601String();
+        DateTime(ref.year, ref.month, 1).toIso8601String();
     // DateTime akzeptiert month > 12 und rollt automatisch ins nächste Jahr.
     final lastDay =
-        DateTime(now.year, now.month + 1, 1).toIso8601String();
+        DateTime(ref.year, ref.month + 1, 1).toIso8601String();
 
     final rows = await db.query(
       _tableName,

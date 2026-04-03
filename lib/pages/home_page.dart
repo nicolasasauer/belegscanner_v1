@@ -45,6 +45,8 @@ class _HomePageState extends State<HomePage> {
   bool _isSearching = false;
   bool _isFabExpanded = false;
   bool _sortAscending = false;
+  /// Aktuelles Sortierfeld: `'date'` (Standard) oder `'amount'`.
+  String _sortField = 'date';
 
   // ---------------------------------------------------------------------------
   // Services & Formatter
@@ -147,7 +149,12 @@ class _HomePageState extends State<HomePage> {
       return true;
     }).toList()
       ..sort((a, b) {
-        final cmp = a.date.compareTo(b.date);
+        final int cmp;
+        if (_sortField == 'amount') {
+          cmp = a.totalAmount.compareTo(b.totalAmount);
+        } else {
+          cmp = a.date.compareTo(b.date);
+        }
         return _sortAscending ? cmp : -cmp;
       });
   }
@@ -534,10 +541,52 @@ class _HomePageState extends State<HomePage> {
               onPressed: () => setState(() => _isSearching = true),
             ),
           if (_receipts.isNotEmpty && !_isSearching)
-            IconButton(
-              icon: Icon(_sortAscending ? Icons.arrow_upward : Icons.arrow_downward),
-              tooltip: 'Sortierung umkehren',
-              onPressed: () => setState(() => _sortAscending = !_sortAscending),
+            PopupMenuButton<String>(
+              icon: Icon(
+                _sortField == 'amount'
+                    ? Icons.euro
+                    : Icons.calendar_today,
+              ),
+              tooltip: 'Sortierung',
+              onSelected: (value) {
+                setState(() {
+                  if (value == 'date_asc') {
+                    _sortField = 'date';
+                    _sortAscending = true;
+                  } else if (value == 'date_desc') {
+                    _sortField = 'date';
+                    _sortAscending = false;
+                  } else if (value == 'amount_asc') {
+                    _sortField = 'amount';
+                    _sortAscending = true;
+                  } else if (value == 'amount_desc') {
+                    _sortField = 'amount';
+                    _sortAscending = false;
+                  }
+                });
+              },
+              itemBuilder: (context) => [
+                CheckedPopupMenuItem(
+                  value: 'date_desc',
+                  checked: _sortField == 'date' && !_sortAscending,
+                  child: const Text('Datum (neu → alt)'),
+                ),
+                CheckedPopupMenuItem(
+                  value: 'date_asc',
+                  checked: _sortField == 'date' && _sortAscending,
+                  child: const Text('Datum (alt → neu)'),
+                ),
+                CheckedPopupMenuItem(
+                  value: 'amount_desc',
+                  checked: _sortField == 'amount' && !_sortAscending,
+                  child: const Text('Betrag (hoch → niedrig)'),
+                ),
+                CheckedPopupMenuItem(
+                  value: 'amount_asc',
+                  checked: _sortField == 'amount' && _sortAscending,
+                  child: const Text('Betrag (niedrig → hoch)'),
+                ),
+              ],
             ),
           if (_receipts.isNotEmpty && !_isSearching)
             IconButton(

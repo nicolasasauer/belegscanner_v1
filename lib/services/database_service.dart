@@ -499,10 +499,10 @@ class DatabaseService {
 
   /// Speichert oder aktualisiert das Händler-Profil für [storeName].
   ///
-  /// Wenn ein Profil für [storeName] bereits vorhanden ist, werden
-  /// [preferredStrategy] und [successCount] überschrieben und
-  /// [successCount] wird zu dem bestehenden Wert addiert wenn
-  /// [incrementSuccess] `true` ist.
+  /// [preferredStrategy] wird immer durch den neuen Wert ersetzt.
+  /// [success_count] wird um 1 erhöht, wenn [incrementSuccess] `true` ist;
+  /// andernfalls bleibt er unverändert (bzw. wird auf 0 gesetzt bei
+  /// einem Neu-Eintrag ohne [incrementSuccess]).
   Future<void> upsertVendorProfile(
     String storeName, {
     required String preferredStrategy,

@@ -201,13 +201,17 @@ class ProcessorService {
       Map<String, dynamic>? vendorProfile;
       final preliminaryVendor = detectMerchant(fullText);
       if (preliminaryVendor != null) {
+        debugPrint('[ProcessorService] Händler erkannt: $preliminaryVendor');
         try {
           vendorProfile =
               await _databaseService.getVendorProfile(preliminaryVendor);
         } catch (e) {
           debugPrint(
-              '[ProcessorService] Vendor-Profil konnte nicht geladen werden: $e');
+              '[ProcessorService] Vendor-Profil für "$preliminaryVendor" '
+              'konnte nicht geladen werden: $e');
         }
+      } else {
+        debugPrint('[ProcessorService] Kein Händler erkannt.');
       }
 
       // Räumliche Zeilendaten aus ML-Kit-Ergebnis extrahieren.

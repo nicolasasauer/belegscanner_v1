@@ -480,8 +480,12 @@ List<String> parseItemsHeuristic(String text,
   }
 
   // ─── Strategie 2: Standard-Heuristik (dm-Kassenbons) ────────────────────
-  // Wird übersprungen, wenn preferredStrategy == 'tax_code'.
-  if (preferredStrategy == 'tax_code') return [];
+  // Wird übersprungen, wenn preferredStrategy == 'tax_code' UND Tax-Code-
+  // Preise gefunden wurden (d.h. Strategie 1 wurde versucht, lieferte aber
+  // kein Ergebnis, weil taxCodePrices.length > tempNames.length).
+  // Wenn jedoch gar keine Tax-Code-Preise gefunden wurden, ist der Bon
+  // möglicherweise ein anderes Format – Fallback auf Standard-Heuristik.
+  if (preferredStrategy == 'tax_code' && taxCodePrices.isNotEmpty) return [];
   if (tempPrices.isEmpty) return [];
 
   if (tempNames.length == tempPrices.length) {
@@ -996,7 +1000,7 @@ Map<String, dynamic> parseOcrText(Map<String, dynamic> params) {
 
   // Primäre Strategie: Spatial-Matching, wenn Bounding-Box-Daten vorhanden.
   List<String> rawItems;
-  String usedStrategy;
+  String? usedStrategy;
   if (spatialLines.isNotEmpty) {
     rawItems = parseSpatialItems(spatialLines);
     if (rawItems.isEmpty) {
@@ -1071,9 +1075,12 @@ Map<String, dynamic> parseOcrText(Map<String, dynamic> params) {
 /// wurde, indem der Ursprungstext auf Tax-Code-Muster geprüft wird.
 ///
 /// Gibt `'tax_code'` zurück, wenn Tax-Code-Preiszeilen im Text vorhanden sind
-/// (typisch für SPAR-Kassenbons), ansonsten `'standard'`.
-String _inferHeuristicStrategy(String text, List<String> items) {
-  if (items.isEmpty) return 'standard';
+/// (typisch für SPAR-Kassenbons) und Artikel gefunden wurden.
+/// Gibt `'standard'` zurück, wenn keine Tax-Codes vorhanden sind und Artikel
+/// gefunden wurden. Gibt `null` zurück, wenn keine Artikel geparst wurden –
+/// in diesem Fall wird kein Vendor-Profil aktualisiert.
+String? _inferHeuristicStrategy(String text, List<String> items) {
+  if (items.isEmpty) return null;
   final taxCodePattern = RegExp(
     r'^\d{1,4}[.,]\d{2}\s+[A-Z]\s*$',
     multiLine: true,

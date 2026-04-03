@@ -48,7 +48,10 @@ class DatabaseService {
   /// Tabelle für den Lern-Feedback-Loop: speichert manuelle OCR-Korrekturen.
   static const _mappingsTable = 'product_mappings';
 
-  static const _dbVersion = 9;
+  /// Tabelle für händlerspezifische Parsing-Profile (Lern-Loop).
+  static const _vendorProfilesTable = 'vendor_profiles';
+
+  static const _dbVersion = 10;
 
   Database? _db;
 
@@ -97,6 +100,14 @@ class DatabaseService {
             raw_ocr_name TEXT NOT NULL UNIQUE,
             corrected_name TEXT NOT NULL,
             category_id INTEGER
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE $_vendorProfilesTable (
+            store_name TEXT PRIMARY KEY,
+            preferred_strategy TEXT NOT NULL DEFAULT 'auto',
+            success_count INTEGER NOT NULL DEFAULT 0,
+            last_updated TEXT
           )
         ''');
         await _insertDefaultCategories(db);
@@ -196,6 +207,17 @@ class DatabaseService {
         if (oldVersion < 9) {
           await db.execute('ALTER TABLE $_tableName ADD COLUMN storeName TEXT');
           await db.execute('ALTER TABLE $_tableName ADD COLUMN spatialData TEXT');
+        }
+        // Version 9 → Version 10: vendor_profiles-Tabelle für Händler-Lern-Loop.
+        if (oldVersion < 10) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS $_vendorProfilesTable (
+              store_name TEXT PRIMARY KEY,
+              preferred_strategy TEXT NOT NULL DEFAULT 'auto',
+              success_count INTEGER NOT NULL DEFAULT 0,
+              last_updated TEXT
+            )
+          ''');
         }
       },
     );
@@ -452,6 +474,57 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getProductMappings() async {
     final db = await database;
     return db.query(_mappingsTable);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Händler-Profil (vendor_profiles)
+  // ---------------------------------------------------------------------------
+
+  /// Gibt das Händler-Profil für [storeName] zurück, oder `null`, wenn kein
+  /// Profil vorhanden ist.
+  ///
+  /// Die zurückgegebene Map enthält die Schlüssel `store_name` (String),
+  /// `preferred_strategy` (String: `'auto'`, `'tax_code'`, `'standard'`,
+  /// `'spatial'`), `success_count` (int) und `last_updated` (String?).
+  Future<Map<String, dynamic>?> getVendorProfile(String storeName) async {
+    final db = await database;
+    final rows = await db.query(
+      _vendorProfilesTable,
+      where: 'store_name = ?',
+      whereArgs: [storeName],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Speichert oder aktualisiert das Händler-Profil für [storeName].
+  ///
+  /// [preferredStrategy] wird immer durch den neuen Wert ersetzt.
+  /// [success_count] wird um 1 erhöht, wenn [incrementSuccess] `true` ist;
+  /// andernfalls bleibt er unverändert (bzw. wird auf 0 gesetzt bei
+  /// einem Neu-Eintrag ohne [incrementSuccess]).
+  Future<void> upsertVendorProfile(
+    String storeName, {
+    required String preferredStrategy,
+    bool incrementSuccess = false,
+  }) async {
+    final db = await database;
+    final existing = await getVendorProfile(storeName);
+    final newCount = (existing?['success_count'] as int? ?? 0) +
+        (incrementSuccess ? 1 : 0);
+    await db.insert(
+      _vendorProfilesTable,
+      {
+        'store_name': storeName,
+        'preferred_strategy': preferredStrategy,
+        'success_count': newCount,
+        'last_updated': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    debugPrint(
+        '[DatabaseService] Vendor-Profil gespeichert: "$storeName" → '
+        'Strategie="$preferredStrategy" success_count=$newCount');
   }
 
   // ---------------------------------------------------------------------------

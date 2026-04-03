@@ -195,6 +195,25 @@ class ProcessorService {
             '[ProcessorService] Produkt-Mappings konnten nicht geladen werden: $e');
       }
 
+      // Händler-Profil für die bevorzugte Parsing-Strategie laden.
+      // Der Händlername wird vorläufig aus dem Rohtext ermittelt, damit das
+      // Profil schon vor dem eigentlichen compute-Aufruf geladen werden kann.
+      Map<String, dynamic>? vendorProfile;
+      final preliminaryVendor = detectMerchant(fullText);
+      if (preliminaryVendor != null) {
+        debugPrint('[ProcessorService] Händler erkannt: $preliminaryVendor');
+        try {
+          vendorProfile =
+              await _databaseService.getVendorProfile(preliminaryVendor);
+        } catch (e) {
+          debugPrint(
+              '[ProcessorService] Vendor-Profil für "$preliminaryVendor" '
+              'konnte nicht geladen werden: $e');
+        }
+      } else {
+        debugPrint('[ProcessorService] Kein Händler erkannt.');
+      }
+
       // Räumliche Zeilendaten aus ML-Kit-Ergebnis extrahieren.
       final spatialLines = <Map<String, dynamic>>[];
       for (final block in recognizedText.blocks) {
@@ -218,6 +237,7 @@ class ProcessorService {
         'categoryData': categoryData,
         'productMappings': productMappings,
         'spatialLines': spatialLines,
+        if (vendorProfile != null) 'vendorProfile': vendorProfile,
       });
 
       // ── Schritt 7: Abgeschlossenen Beleg speichern ───────────────────────
@@ -240,6 +260,26 @@ class ProcessorService {
 
       await _databaseService.updateReceipt(completed);
       onReceiptUpdated?.call(completed);
+
+      // ── Schritt 8: Vendor-Profil nach erfolgreichem Parsing aktualisieren ─
+      final detectedVendor = result['storeName'] as String?;
+      final parsedItems = result['items'] as List?;
+      final usedStrategy = result['usedStrategy'] as String?;
+      if (detectedVendor != null &&
+          parsedItems != null &&
+          parsedItems.isNotEmpty &&
+          usedStrategy != null) {
+        try {
+          await _databaseService.upsertVendorProfile(
+            detectedVendor,
+            preferredStrategy: usedStrategy,
+            incrementSuccess: true,
+          );
+        } catch (e) {
+          debugPrint(
+              '[ProcessorService] Vendor-Profil konnte nicht gespeichert werden: $e');
+        }
+      }
     } catch (e, st) {
       debugPrint('[ProcessorService] Fehler bei der Verarbeitung: $e\n$st');
       final failed = receipt.copyWith(status: 'failed', progress: 0.0);

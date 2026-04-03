@@ -270,6 +270,11 @@ String _formatPriceComma(double price) =>
 /// Diese Funktion wird von [parseItemsImpl] als Fallback aufgerufen, wenn
 /// die primäre Look-Ahead-Logik keine Artikel gefunden hat.
 ///
+/// [preferredStrategy] steuert, welche Sub-Strategie bevorzugt wird:
+/// - `'auto'` (Standard): Tax-Code zuerst, dann Standard-Heuristik.
+/// - `'tax_code'`: Nur Tax-Code-Strategie (SPAR-Kassenbons).
+/// - `'standard'`: Nur Standard-Heuristik (dm-Kassenbons u. a.).
+///
 /// Algorithmus (Two-List-Pairing):
 ///   1. Jede Zeile wird durch einen aggressiven Junk-Filter geleitet
 ///      (ATU, EFSTA, Buchung, Contactless, GmbH, Payback, Hash-Codes, …).
@@ -287,7 +292,8 @@ String _formatPriceComma(double price) =>
 ///      - Match-Maker: letzte N Preise für N Namen (Summen/Terminalbeträge
 ///        stehen oft früh in der Liste).
 @visibleForTesting
-List<String> parseItemsHeuristic(String text) {
+List<String> parseItemsHeuristic(String text,
+    {String preferredStrategy = 'auto'}) {
   // ─── Aggressiver Junk-Filter ─────────────────────────────────────────────
   // Enthält alle bekannten Nicht-Artikel-Schlüsselwörter aus dm- und
   // SPAR-Kassenbons.
@@ -457,7 +463,10 @@ List<String> parseItemsHeuristic(String text) {
   // ─── Strategie 1: Tax-Code-Preise (SPAR-Kassenbons) ─────────────────────
   // Wenn Tax-Code-Preise gefunden wurden UND ihre Anzahl ≤ Namen-Anzahl,
   // werden die ersten N Namen mit diesen Preisen gepaart.
-  if (taxCodePrices.isNotEmpty && taxCodePrices.length <= tempNames.length) {
+  // Wird übersprungen, wenn preferredStrategy == 'standard'.
+  if (preferredStrategy != 'standard' &&
+      taxCodePrices.isNotEmpty &&
+      taxCodePrices.length <= tempNames.length) {
     final n = taxCodePrices.length;
     for (int i = 0; i < n; i++) {
       result.add('${tempNames[i]}  ${_formatPriceComma(taxCodePrices[i])}');
@@ -471,6 +480,12 @@ List<String> parseItemsHeuristic(String text) {
   }
 
   // ─── Strategie 2: Standard-Heuristik (dm-Kassenbons) ────────────────────
+  // Wird übersprungen, wenn preferredStrategy == 'tax_code' UND Tax-Code-
+  // Preise gefunden wurden (d.h. Strategie 1 wurde versucht, lieferte aber
+  // kein Ergebnis, weil taxCodePrices.length > tempNames.length).
+  // Wenn jedoch gar keine Tax-Code-Preise gefunden wurden, ist der Bon
+  // möglicherweise ein anderes Format – Fallback auf Standard-Heuristik.
+  if (preferredStrategy == 'tax_code' && taxCodePrices.isNotEmpty) return [];
   if (tempPrices.isEmpty) return [];
 
   if (tempNames.length == tempPrices.length) {
@@ -539,7 +554,8 @@ List<String> parseItemsHeuristic(String text) {
 /// Jeder erkannte Treffer wird per [debugPrint] mit
 /// `[OCR-Match] Found: Name=… Price=…` protokolliert.
 @visibleForTesting
-List<String> parseItemsImpl(String text) {
+List<String> parseItemsImpl(String text,
+    {String preferredStrategy = 'auto'}) {
   // ─── 1. Strukturelle Muster (Anker) ──────────────────────────────────────
 
   // Header-Cut: Datum (TT.MM.JJJJ) oder Uhrzeit (HH:MM) markiert das Ende
@@ -741,7 +757,7 @@ List<String> parseItemsImpl(String text) {
   // der OCR-Text Namen und Preise vollständig getrennt darstellt und SUMME
   // sehr früh im Text erscheint), greift die Heuristik-Queue-Logik.
   if (result.isEmpty) {
-    return parseItemsHeuristic(text);
+    return parseItemsHeuristic(text, preferredStrategy: preferredStrategy);
   }
 
   return result;
@@ -949,6 +965,12 @@ List<String> parseSpatialItems(List<Map<String, dynamic>> spatialLines) {
 ///   (Schlüssel: `text`, `top`, `bottom`, `left`, `right`, `centerY`,
 ///   `centerX`). Wenn angegeben, wird [parseSpatialItems] als primäre
 ///   Matching-Strategie bevorzugt (Y-Achsen-Korridor-Logik).
+/// - `'vendorProfile'` *(optional)*: Map mit dem Händler-Profil aus der
+///   Datenbank (Schlüssel: `preferred_strategy`). Wenn vorhanden, wird die
+///   bevorzugte Parsing-Strategie des Händlers verwendet.
+///
+/// Gibt zusätzlich `'usedStrategy'` zurück: die tatsächlich verwendete
+/// Parsing-Strategie (`'spatial'`, `'tax_code'` oder `'standard'`).
 ///
 /// Nach dem Extrahieren der Artikel werden [normalizeName] und
 /// [_smartCategorize] auf jeden Artikel angewendet, sodass die
@@ -970,16 +992,27 @@ Map<String, dynamic> parseOcrText(Map<String, dynamic> params) {
   final rawSpatialLines = params['spatialLines'] as List<dynamic>? ?? [];
   final spatialLines = rawSpatialLines.cast<Map<String, dynamic>>();
 
+  // Händler-Profil für die bevorzugte Parsing-Strategie.
+  final vendorProfile =
+      params['vendorProfile'] as Map<String, dynamic>?;
+  final preferredStrategy =
+      (vendorProfile?['preferred_strategy'] as String?) ?? 'auto';
+
   // Primäre Strategie: Spatial-Matching, wenn Bounding-Box-Daten vorhanden.
   List<String> rawItems;
+  String? usedStrategy;
   if (spatialLines.isNotEmpty) {
     rawItems = parseSpatialItems(spatialLines);
     if (rawItems.isEmpty) {
       // Kein räumliches Ergebnis → klassische Text-Parsing-Logik.
-      rawItems = parseItemsImpl(text);
+      rawItems = parseItemsImpl(text, preferredStrategy: preferredStrategy);
+      usedStrategy = _inferHeuristicStrategy(text, rawItems);
+    } else {
+      usedStrategy = 'spatial';
     }
   } else {
-    rawItems = parseItemsImpl(text);
+    rawItems = parseItemsImpl(text, preferredStrategy: preferredStrategy);
+    usedStrategy = _inferHeuristicStrategy(text, rawItems);
   }
 
   final normalizedItems = <String>[];
@@ -1034,7 +1067,25 @@ Map<String, dynamic> parseOcrText(Map<String, dynamic> params) {
     'storeName': detectMerchant(text),
     'date': detectDate(text),
     'spatialData': jsonEncode(spatialLines),
+    'usedStrategy': usedStrategy,
   };
+}
+
+/// Bestimmt heuristisch, welche Text-Parsing-Strategie für [items] verwendet
+/// wurde, indem der Ursprungstext auf Tax-Code-Muster geprüft wird.
+///
+/// Gibt `'tax_code'` zurück, wenn Tax-Code-Preiszeilen im Text vorhanden sind
+/// (typisch für SPAR-Kassenbons) und Artikel gefunden wurden.
+/// Gibt `'standard'` zurück, wenn keine Tax-Codes vorhanden sind und Artikel
+/// gefunden wurden. Gibt `null` zurück, wenn keine Artikel geparst wurden –
+/// in diesem Fall wird kein Vendor-Profil aktualisiert.
+String? _inferHeuristicStrategy(String text, List<String> items) {
+  if (items.isEmpty) return null;
+  final taxCodePattern = RegExp(
+    r'^\d{1,4}[.,]\d{2}\s+[A-Z]\s*$',
+    multiLine: true,
+  );
+  return taxCodePattern.hasMatch(text) ? 'tax_code' : 'standard';
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,6 +1229,7 @@ class OcrService {
     // Schlägt das Laden fehl, greift der statische categoryMap-Fallback.
     List<Map<String, dynamic>> categoryData = [];
     List<Map<String, dynamic>> productMappings = [];
+    Map<String, dynamic>? vendorProfile;
     final db = _databaseService;
     if (db != null) {
       try {
@@ -1192,6 +1244,15 @@ class OcrService {
         debugPrint(
             '[OcrService] Produkt-Mappings konnten nicht geladen werden: $e');
       }
+      // Händler-Profil für die bevorzugte Parsing-Strategie laden.
+      if (detectedMerchant != null) {
+        try {
+          vendorProfile = await db.getVendorProfile(detectedMerchant);
+        } catch (e) {
+          debugPrint(
+              '[OcrService] Vendor-Profil konnte nicht geladen werden: $e');
+        }
+      }
     }
 
     // Parsing im Background-Isolate ausführen, damit der UI-Thread
@@ -1201,15 +1262,42 @@ class OcrService {
       'categoryData': categoryData,
       'productMappings': productMappings,
       'spatialLines': spatialLines,
+      if (vendorProfile != null) 'vendorProfile': vendorProfile,
     });
+
+    // Vendor-Profil nach erfolgreichem Parsing aktualisieren.
+    final parsedStoreName = result['storeName'] as String?;
+    final parsedItems = result['items'] as List?;
+    final usedStrategy = result['usedStrategy'] as String?;
+    if (db != null &&
+        parsedStoreName != null &&
+        parsedItems != null &&
+        parsedItems.isNotEmpty &&
+        usedStrategy != null) {
+      try {
+        await db.upsertVendorProfile(
+          parsedStoreName,
+          preferredStrategy: usedStrategy,
+          incrementSuccess: true,
+        );
+      } catch (e) {
+        debugPrint(
+            '[OcrService] Vendor-Profil konnte nicht gespeichert werden: $e');
+      }
+    }
+
+    final dateStr = result['date'] as String?;
+    final parsedDate = dateStr != null ? DateTime.tryParse(dateStr) : null;
 
     return Receipt(
       id: _uuid.v4(),
-      date: DateTime.now(),
+      date: parsedDate ?? DateTime.now(),
       totalAmount: result['amount'] as double,
       items: List<String>.from(result['items'] as List),
       categories: List<String>.from(result['categories'] as List),
       imagePath: permanentImagePath,
+      storeName: parsedStoreName,
+      spatialData: result['spatialData'] as String?,
       rawText: fullText.isEmpty ? null : fullText,
     );
   }

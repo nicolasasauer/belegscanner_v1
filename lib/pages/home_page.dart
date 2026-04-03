@@ -518,7 +518,7 @@ class _HomePageState extends State<HomePage> {
                 controller: _searchController,
                 autofocus: true,
                 decoration: InputDecoration(
-                  hintText: 'Händler, Betrag, Stichwort…',
+                  hintText: 'Händler, Betrag, OCR-Text…',
                   border: InputBorder.none,
                   hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
                 ),
@@ -540,7 +540,7 @@ class _HomePageState extends State<HomePage> {
               tooltip: 'Belege durchsuchen',
               onPressed: () => setState(() => _isSearching = true),
             ),
-          if (_receipts.isNotEmpty && !_isSearching)
+          if (_receipts.isNotEmpty)
             PopupMenuButton<String>(
               icon: Icon(
                 _sortField == 'amount'
